@@ -1,4 +1,5 @@
 import cv2 as cv
+from cv2.typing import MatLike
 import numpy as np
 from pyscrcpy import Client, const
 from TemplateGetter import TemplateGetter
@@ -7,8 +8,8 @@ import os
 import keyboard
 from typing import Callable, Tuple, Optional
 from cv2.typing import Point
-
-# import utils.kill_button
+from GameMap import GameMap
+from solve_grid import breadth_first_search
 
 
 class Bot:
@@ -22,7 +23,7 @@ class Bot:
         greyscale: bool = True,
     ):
 
-        self.CONFIDENCE_THRESHOLD = 0.65
+        self.CONFIDENCE_THRESHOLD = 0.45
         self.FONT = cv.FONT_HERSHEY_SIMPLEX
         # Movement directions
         self.KEYS = {
@@ -45,11 +46,27 @@ class Bot:
             file_path=snake_file_path
         )
         self.apple_template = self.template_getter.get_image_and_scaled(
-            file_path=apple_file_path, scales=[0.8, 1.0, 1.2]
+            file_path=apple_file_path, scales=[0.9, 1.0, 1.1]
         )
 
         # Load and start client
         self.client = Client(max_size=max_size, bitrate=bitrate, max_fps=max_fps)
+
+        # Prepare map
+        self.game_map = GameMap()
+
+        # Define trim values for cropping the frame
+        self.FRAME_WIDTH, self.FRAME_HEIGHT = 215, 480
+        self.left_crop = int(self.FRAME_WIDTH * 0.1)
+        self.right_crop = self.FRAME_WIDTH - int(self.FRAME_WIDTH * 0.1)
+        self.top_crop = int(self.FRAME_HEIGHT * 0.148)
+        self.bottom_crop = self.FRAME_HEIGHT - int(self.FRAME_HEIGHT * 0.023)
+        self.CAPTURE_WIDTH, self.CAPTURE_HEIGHT = (
+            self.right_crop - self.left_crop,
+            self.bottom_crop - self.top_crop,
+        )
+        self.CELL_W = self.CAPTURE_WIDTH / self.game_map.GRID_W
+        self.CELL_H = self.CAPTURE_HEIGHT / self.game_map.GRID_H
 
     def kill_button(
         self,
@@ -83,7 +100,9 @@ class Bot:
                 return
 
             # Crop frame
-            frame = frame[71:469, 22:193]
+            frame = frame[
+                self.top_crop : self.bottom_crop, self.left_crop : self.right_crop
+            ]
 
             # Convert frame to greyscale for matching
             comparison_frame = (
@@ -92,23 +111,55 @@ class Bot:
 
             # Perform Template Matching
             # Snake
-            self._match_best_to_template(
+            head_loc = self._match_best_to_template(
                 primary_collection=self.snake_head_templates,
                 comparison_frame=comparison_frame,
                 text_colour=(0, 0, 255),
                 frame=frame,
             )
+            if head_loc is not None:
+                snake_pos = self._pixel_to_coords(
+                    head_loc[0],
+                    head_loc[1],
+                    self.snake_head_templates[0],  # type:ignore
+                )
+            else:
+                snake_pos = None
 
             # Apple
-            self._match_best_to_template(
+            apl_loc = self._match_best_to_template(
                 primary_collection=self.apple_template,
                 comparison_frame=comparison_frame,
                 text_colour=(0, 255, 0),
                 frame=frame,
             )
 
+            if apl_loc is not None:
+                apl_pos = self._pixel_to_coords(
+                    apl_loc[0],
+                    apl_loc[1],
+                    self.apple_template[0],  # type:ignore
+                )
+            else:
+                apl_pos = None
+
+            # Pathfinding
+            grid = self.game_map.build_grid(frame)
+            if snake_pos and apl_pos:
+                path = breadth_first_search(
+                    grid=grid,
+                    start_x=snake_pos[0],
+                    start_y=snake_pos[1],
+                    goal_x=apl_pos[0],
+                    goal_y=apl_pos[1],
+                )
+                if path:
+                    for grid_x, grid_y in path:
+                        print(grid_y, grid_x)
+                        x, y = self._coords_to_pixels(grid_x=grid_x, grid_y=grid_y)
+                        cv.circle(frame, (y, x), 3, (80, 98, 255), -1)
+
             # Show the video feed with the overlay
-            cv.circle(frame, (120, 350), 10, (255, 255, 0), -1)
             cv.imshow("Bot Vision", frame)
 
             # cv.waitKey(1)
@@ -126,13 +177,40 @@ class Bot:
 
         return on_frame
 
+    def _pixel_to_coords(self, x: int, y: int, template: MatLike) -> Tuple[int, int]:
+
+        # Adjust x, y to be the centre of the object
+        obj_w = template[1]
+        obj_h = template[2]
+
+        centre_x = x + (obj_w // 2)
+        centre_y = y + (obj_h // 2)
+
+        # Convert to Grid Index
+        grid_x = int(centre_x // self.CELL_W)
+        grid_y = int(centre_y // self.CELL_H)
+
+        # Safety Clamp
+        grid_x = max(0, min(grid_x, self.game_map.GRID_W - 1))
+        grid_y = max(0, min(grid_y, self.game_map.GRID_H - 1))
+
+        return (grid_x, grid_y)
+
+    def _coords_to_pixels(self, grid_x: int, grid_y: int) -> Tuple[int, int]:
+
+        # Convert to Grid Index
+        x = int((grid_x * self.CELL_W) + (self.CELL_W / 2))
+        y = int((grid_y * self.CELL_H) + (self.CELL_H / 2))
+
+        return (x, y)
+
     def _match_best_to_template(
         self,
         primary_collection: list[Tuple[np.ndarray, int, int]],
         comparison_frame: np.ndarray,
         text_colour: Tuple[int, int, int],
         frame: np.ndarray,
-    ) -> None:
+    ) -> Optional[Point]:
         """Match an image with another image. If it matches then return the threshold and location.
 
         Args:
@@ -169,7 +247,9 @@ class Bot:
                     colour=text_colour,
                     text=f"Match: {best_val:.2f}",
                 )
-                return
+                return max_loc
+
+            return None
 
     def _write_text_on_frame(
         self,
@@ -218,12 +298,12 @@ class Bot:
 if __name__ == "__main__":
     try:
         bot = Bot(
-            snake_file_path="assets/snake_eyes.png",
+            snake_file_path="assets/snake_snooter.png",
             apple_file_path="assets/apple.png",
             max_size=480,
             bitrate=800000,
             max_fps=20,
-            greyscale=True,
+            greyscale=False,
         )
         bot.play_snake()
     except Exception:
