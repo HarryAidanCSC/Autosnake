@@ -1,30 +1,58 @@
+# Third-Party
 import cv2 as cv
-from cv2.typing import MatLike
 import numpy as np
 from pyscrcpy import Client, const
-from TemplateGetter import TemplateGetter
 import time
 import os
 import keyboard
+
+# Type Hints
 from typing import Callable, Tuple, Optional
-from cv2.typing import Point
+from cv2.typing import MatLike, Point
+
+# Custom
+from TemplateGetter import TemplateGetter
 from GameMap import GameMap
 from solve_grid import breadth_first_search
+from FrameRenderer import FrameRender
+from utils.verify_phone import check_device_connection, AndroidConnectionError
+from utils.kill_button import kill_button
 
 
 class Bot:
+    """Bot to automate Snake."""
+
     def __init__(
         self,
         snake_file_path: str,
         apple_file_path: str,
+        cog_file_path: str,
         max_size: int = 480,
         bitrate: int = 800000,
         max_fps: int = 20,
-        greyscale: bool = True,
+        greyscale: bool = False,
+        visual_debug: bool = True,
     ):
+        """Construct a new Bot to play Snake.
 
-        self.CONFIDENCE_THRESHOLD = 0.45
-        self.FONT = cv.FONT_HERSHEY_SIMPLEX
+        Args:
+            snake_file_path (str): File path of the snake head template.
+            apple_file_path (str): File path of the apple template.
+            max_size (int, optional): Maximum number of pixels for the phone's x/y. Defaults to 480.
+            bitrate (int, optional): Rate of data transfer. Defaults to 800000.
+            max_fps (int, optional): Maximum number of frames per second. Defaults to 20.
+            greyscale (bool, optional): Apply greyscaling to images. Defaults to True.
+            visual_debug (bool, optional): Apply visual debugging overlay. Defaults to True.
+        """
+
+        # CONSTANTS
+        self.CONFIDENCE_THRESHOLD = 0.8
+
+        # Server config
+        self.max_size = max_size
+        self.bitrate = bitrate
+        self.max_fps = max_fps
+
         # Movement directions
         self.KEYS = {
             "UP": const.KEYCODE_DPAD_UP,
@@ -32,14 +60,13 @@ class Bot:
             "LEFT": const.KEYCODE_DPAD_LEFT,
             "RIGHT": const.KEYCODE_DPAD_RIGHT,
         }
-        # Original phone dimensions
-        self.PHONE_RESOLUTION = (1080, 2408)
 
+        # Initalise image calibration
         self.template_getter = TemplateGetter(greyscale=greyscale)
         self.greyscale = greyscale
 
         # Run hotkey in background
-        keyboard.add_hotkey("esc", self.kill_button)
+        keyboard.add_hotkey("esc", kill_button)
 
         # Load templates
         self.snake_head_templates = self.template_getter.get_image_and_rotations(
@@ -50,51 +77,143 @@ class Bot:
         )
 
         # Load and start client
-        self.client = Client(max_size=max_size, bitrate=bitrate, max_fps=max_fps)
-
-        # Prepare map
+        self.client = Client(
+            max_size=self.max_size, bitrate=self.bitrate, max_fps=self.max_fps
+        )
         self.game_map = GameMap()
 
+        # Original phone dimensions - adjust as needed
+        self.PHONE_RESOLUTION = (1080, 2408)
+
         # Define trim values for cropping the frame
-        self.FRAME_WIDTH, self.FRAME_HEIGHT = 215, 480
-        self.left_crop = int(self.FRAME_WIDTH * 0.1)
-        self.right_crop = self.FRAME_WIDTH - int(self.FRAME_WIDTH * 0.1)
-        self.top_crop = int(self.FRAME_HEIGHT * 0.148)
-        self.bottom_crop = self.FRAME_HEIGHT - int(self.FRAME_HEIGHT * 0.023)
+        self.left_crop, self.right_crop, self.top_crop, self.bottom_crop = (
+            self._calibrate_capture_region(cog_file_path=cog_file_path)
+        )
+
+        # New capture width for the cropped region
         self.CAPTURE_WIDTH, self.CAPTURE_HEIGHT = (
             self.right_crop - self.left_crop,
             self.bottom_crop - self.top_crop,
         )
-        self.CELL_W = self.CAPTURE_WIDTH / self.game_map.GRID_W
-        self.CELL_H = self.CAPTURE_HEIGHT / self.game_map.GRID_H
+        # Calculate width of each cell
+        self.frame_renderer = FrameRender(
+            capture_width=self.CAPTURE_WIDTH,
+            capture_height=self.CAPTURE_HEIGHT,
+            n_cells_w=self.game_map.GRID_W,
+            n_cells_h=self.game_map.GRID_H,
+            debug_overlay=visual_debug,
+        )
 
-    def kill_button(
-        self,
-    ) -> None:
-        """Keyboard escape if mouse cannot be force quitted."""
+    def _calibrate_capture_region(
+        self, cog_file_path: str
+    ) -> Tuple[int, int, int, int]:
+        """Calibrate existing capture region to JUST the relevant part of the screen
 
-        print("\nEscape Button Pressed. Force quitting...")
-        os._exit(0)
+        Arguements:
+            cog_file_path (str): File path of cog icon for template matching.
+        Raises:
+            RuntimeError: Screen grab could not be taken.
+            RuntimeError: Could not find a valid capture region.
 
-    def play_snake(self) -> None:
+        Returns:
+            Tuple[int, int, int, int]: left, right, top and bottom crop coordinates.
+        """
+        self.latest_frame = None  # Ensure we don't have old data
+        self.last_action_time = 0
 
-        # Setup and start
-        on_frame = self._get_on_frame()
-        self.client.on_frame(on_frame)
+        # Read in cog image template
+        self.cog_image = self.template_getter._read_image(file_path=cog_file_path)
+
+        # Temporary function that saves the frame
+        def get_one_frame(client: Client, frame: MatLike) -> None:
+            """Function to take one single frame during setup"
+
+            Args:
+                client (Client): Connection to client.
+                frame (MatLike): Current viewing frame.
+            """
+            if frame is None:
+                return
+
+            # Exit if last action was recent
+            if time.time() - self.last_action_time < 1.5:
+                return
+
+            # Check if the frame contains the setting cog icon
+            value, _ = self.template_getter.match_with_template(
+                img=self.cog_image, comparison_frame=frame
+            )
+
+            # If the cog is in frame, press play
+            print(value)
+            if value > self.CONFIDENCE_THRESHOLD:
+                self._restart(client=client)
+                self.last_action_time = time.time()
+                return
+
+            if frame is not None:
+                self.latest_frame = frame
+                self.client.stop()
+
+        self.client.on_frame(get_one_frame)
         self.client.start(threaded=True)
 
-        # Stop client on main thread
+        #  Wait until we have the first frame
+        start_time = time.time()
+        while self.latest_frame is None:
+            # Emergency exit if it takes too long
+            if time.time() - start_time > 5:
+                raise RuntimeError("Could not capture an inital frame during setup.")
+            time.sleep(0.01)
+
+        # Find the capture region
+        hsv_frame = cv.cvtColor(self.latest_frame, cv.COLOR_BGR2HSV)
+
+        # Kill the client
+        self.client.stop()
+
+        # Colour filtering for playable region
+        capture_region_loc = self.template_getter.get_corners(
+            frame=hsv_frame,
+            lower_bound=[32, 148, 173],
+            upper_bound=[46, 175, 223],
+        )
+
+        if capture_region_loc is None:
+            raise RuntimeError("Could not find the initial start frame.")
+
+        top_left, bottom_right = capture_region_loc
+
+        # Calibrate new capture region
+        return top_left[0], bottom_right[0], top_left[1], bottom_right[1]
+
+    def play_snake(self) -> None:
+        """Entry point to play a snake repeatedly."""
+        # Setup and start
+        if not self.client.alive:
+            self.client = Client(
+                max_size=self.max_size, bitrate=self.bitrate, max_fps=self.max_fps
+            )
+            on_frame = self._get_on_frame()
+            self.client.on_frame(on_frame)
+            self.client.start(threaded=True)
+        else:
+            raise RuntimeError("Client was not previously closed.")
+
         try:
             while True:
                 time.sleep(1)
         except:
             self.client.stop()
             cv.destroyAllWindows()
-            self.kill_button()
+            kill_button()
+        finally:
+            self.client.stop()
 
     def _get_on_frame(self) -> Callable[[Client, np.ndarray], None]:
 
         def on_frame(client: Client, frame: np.ndarray) -> None:
+
             # Exit if not configured correctly
             if frame is None:
                 return
@@ -103,130 +222,150 @@ class Bot:
             frame = frame[
                 self.top_crop : self.bottom_crop, self.left_crop : self.right_crop
             ]
+            # Convert frame to greyscale for matching (only for template matching)
+            hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
 
-            # Convert frame to greyscale for matching
-            comparison_frame = (
-                cv.cvtColor(frame, cv.COLOR_BGR2GRAY) if self.greyscale else frame
+            # Colour filtering for snake head
+            head_loc = self.template_getter.colour_filtering(
+                frame=hsv_frame,
+                lower_bound=[83, 0, 190],
+                upper_bound=[128, 173, 255],
+                is_snake_head=True,
             )
 
-            # Perform Template Matching
-            # Snake
-            head_loc = self._match_best_to_template(
-                primary_collection=self.snake_head_templates,
-                comparison_frame=comparison_frame,
-                text_colour=(0, 0, 255),
-                frame=frame,
-            )
             if head_loc is not None:
-                snake_pos = self._pixel_to_coords(
-                    head_loc[0],
-                    head_loc[1],
+                template_w = self.snake_head_templates[0][1]
+                template_h = self.snake_head_templates[0][2]
+
+                # Convert center to top-left corner
+                top_left_x = head_loc[0] - (template_w // 2)
+                top_left_y = head_loc[1] - (template_h // 2)
+                top_left = (top_left_x, top_left_y)
+
+                self.frame_renderer._write_box_on_frame(
+                    frame,
+                    top_left=top_left,
+                    width=template_w,
+                    height=template_h,
+                    colour_key="snakeHead",
+                )
+
+                # For grid mapping, pass the top-left corner
+                snake_pos = self.frame_renderer._pixel_to_coords(
+                    top_left_x,
+                    top_left_y,
                     self.snake_head_templates[0],  # type:ignore
                 )
             else:
                 snake_pos = None
 
-            # Apple
-            apl_loc = self._match_best_to_template(
-                primary_collection=self.apple_template,
-                comparison_frame=comparison_frame,
-                text_colour=(0, 255, 0),
-                frame=frame,
+            apl_loc = self.template_getter.colour_filtering(
+                frame=hsv_frame,
+                lower_bound=[4, 155, 191],
+                upper_bound=[10, 241, 252],
             )
 
             if apl_loc is not None:
-                apl_pos = self._pixel_to_coords(
-                    apl_loc[0],
-                    apl_loc[1],
+                template_w = self.apple_template[0][1]
+                template_h = self.apple_template[0][2]
+
+                # Convert center to top-left corner
+                top_left_x = apl_loc[0] - (template_w // 2)
+                top_left_y = apl_loc[1] - (template_h // 2)
+                top_left = (top_left_x, top_left_y)
+
+                self.frame_renderer._write_box_on_frame(
+                    frame,
+                    top_left=top_left,
+                    width=template_w,
+                    height=template_h,
+                    colour_key="apple",
+                )
+
+                # Use top-left for grid mapping (same as snake head)
+                apl_pos = self.frame_renderer._pixel_to_coords(
+                    top_left_x,
+                    top_left_y,
                     self.apple_template[0],  # type:ignore
                 )
             else:
                 apl_pos = None
 
             # Pathfinding
-            grid = self.game_map.build_grid(frame)
+            grid, snake_body = self.game_map.build_grid(frame)
+
+            # Render snake's body for debugger
+            self.frame_renderer.render_multi_coordinates(
+                frame=frame,
+                coordinates=snake_body,
+                colour_key="snake",
+                is_grid_coords=False,
+            )
+
             if snake_pos and apl_pos:
                 path = breadth_first_search(
                     grid=grid,
-                    start_x=snake_pos[0],
-                    start_y=snake_pos[1],
-                    goal_x=apl_pos[0],
-                    goal_y=apl_pos[1],
+                    start_x=snake_pos[0] + 1,  # Add 1 for padding
+                    start_y=snake_pos[1] + 1,  # Add 1 for padding
+                    goal_x=apl_pos[0] + 1,  # Add 1 for padding
+                    goal_y=apl_pos[1] + 1,  # Add 1 for padding
                 )
                 if path:
-                    for grid_x, grid_y in path:
-                        print(grid_y, grid_x)
-                        x, y = self._coords_to_pixels(grid_x=grid_x, grid_y=grid_y)
-                        cv.circle(frame, (y, x), 3, (80, 98, 255), -1)
+                    # Convert back to unpadded coordinates for rendering
+                    unpadded_path = [(y - 1, x - 1) for x, y in path]
+
+                    self.frame_renderer.render_multi_coordinates(
+                        frame=frame,
+                        coordinates=unpadded_path,
+                        colour_key="path",
+                        is_grid_coords=True,
+                    )
 
             # Show the video feed with the overlay
             cv.imshow("Bot Vision", frame)
 
             # cv.waitKey(1)
-            key = cv.waitKey(1)
+            key = cv.waitKey(1) & 0xFF
             if key == ord("w"):
                 self._move_snake(client, "UP")
-            if key == ord("a"):
+            elif key == ord("a"):
                 self._move_snake(client, "LEFT")
-            if key == ord("s"):
+            elif key == ord("s"):
                 self._move_snake(client, "DOWN")
-            if key == ord("d"):
+            elif key == ord("d"):
                 self._move_snake(client, "RIGHT")
             elif key == ord("e"):
                 self._restart(client)
+            if key == ord("s"):
+                cv.imwrite("debug_screenshot.png", frame)
 
         return on_frame
 
-    def _pixel_to_coords(self, x: int, y: int, template: MatLike) -> Tuple[int, int]:
-
-        # Adjust x, y to be the centre of the object
-        obj_w = template[1]
-        obj_h = template[2]
-
-        centre_x = x + (obj_w // 2)
-        centre_y = y + (obj_h // 2)
-
-        # Convert to Grid Index
-        grid_x = int(centre_x // self.CELL_W)
-        grid_y = int(centre_y // self.CELL_H)
-
-        # Safety Clamp
-        grid_x = max(0, min(grid_x, self.game_map.GRID_W - 1))
-        grid_y = max(0, min(grid_y, self.game_map.GRID_H - 1))
-
-        return (grid_x, grid_y)
-
-    def _coords_to_pixels(self, grid_x: int, grid_y: int) -> Tuple[int, int]:
-
-        # Convert to Grid Index
-        x = int((grid_x * self.CELL_W) + (self.CELL_W / 2))
-        y = int((grid_y * self.CELL_H) + (self.CELL_H / 2))
-
-        return (x, y)
-
     def _match_best_to_template(
         self,
-        primary_collection: list[Tuple[np.ndarray, int, int]],
+        primary_collection: list[Tuple[MatLike, int, int]],
         comparison_frame: np.ndarray,
-        text_colour: Tuple[int, int, int],
-        frame: np.ndarray,
+        colour_key: str,
+        frame: MatLike,
     ) -> Optional[Point]:
         """Match an image with another image. If it matches then return the threshold and location.
 
         Args:
-            primary_collection ([(np.ndarray, int, int)]: Image(s) to locate the comparison upon.
-            comparison_frame (np.ndarray): Image to compare.
-            text_colour ((int, int, int)): Colour on frame to display.
-            frame: (np.ndarray): Image to display.
+            primary_collection ([(MatLike, int, int)]: Image(s) to locate the comparison upon.
+            comparison_frame (MatLike): Image to compare.
+            colour_key (str): Name of colour key to display using.
+            frame: (MatLike): Image to display.
+            "
         """
         best_val, best_loc, best_w, best_h = 0.0, None, 0, 0
 
         for collection in primary_collection:
             img, w, h = collection
-            result = cv.matchTemplate(img, comparison_frame, cv.TM_CCOEFF_NORMED)
 
             # Closest match
-            _, max_val, _, max_loc = cv.minMaxLoc(result)
+            max_val, max_loc = self.template_getter.match_with_template(
+                img=img, comparison_frame=comparison_frame
+            )
 
             # Keep best match
             if max_val > best_val:
@@ -238,45 +377,19 @@ class Bot:
                 )
 
             # Break condition
+
             if best_val >= self.CONFIDENCE_THRESHOLD and best_loc is not None:
-                self._write_text_on_frame(
+                self.frame_renderer._write_box_on_frame(
                     frame,
                     top_left=best_loc,
                     width=best_w,
                     height=best_h,
-                    colour=text_colour,
+                    colour_key=colour_key,
                     text=f"Match: {best_val:.2f}",
                 )
                 return max_loc
 
             return None
-
-    def _write_text_on_frame(
-        self,
-        frame: np.ndarray,
-        top_left: Point,
-        width: int,
-        height: int,
-        colour: Tuple[int, int, int],
-        text: str,
-    ) -> None:
-        # max_loc is the top-left corner of the match
-        bottom_right = (top_left[0] + width, top_left[1] + height)
-
-        # 5. Draw a Rectangle on the ORIGINAL frame
-        # (Image, Start, End, Color(B,G,R), Thickness)
-        cv.rectangle(frame, top_left, bottom_right, colour, 2)
-
-        # Put text showing the confidence score
-        cv.putText(
-            frame,
-            text,
-            (top_left[0], top_left[1] - 10),
-            self.FONT,
-            0.5,
-            colour,
-            1,
-        )
 
     def _move_snake(self, client: Client, direction: str):
         """
@@ -297,14 +410,21 @@ class Bot:
 
 if __name__ == "__main__":
     try:
+        # Check device is connected before playing
+        check_device_connection()
+
         bot = Bot(
             snake_file_path="assets/snake_snooter.png",
             apple_file_path="assets/apple.png",
+            cog_file_path="assets/gear.png",
             max_size=480,
             bitrate=800000,
             max_fps=20,
-            greyscale=False,
+            visual_debug=True,
         )
         bot.play_snake()
-    except Exception:
-        bot.kill_button()  # type:ignore
+    except AndroidConnectionError as e:
+        print(f"Error: {e}")
+    except Exception as e:
+        print(f"Error: {e}")
+        kill_button()

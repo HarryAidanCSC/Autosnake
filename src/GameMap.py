@@ -1,5 +1,5 @@
 import numpy as np
-import cv2 as cv
+from typing import Tuple
 
 
 class GameMap:
@@ -7,13 +7,17 @@ class GameMap:
         self.GRID_W = grid_w
         self.GRID_H = grid_h
 
-    def build_grid(self, frame: np.ndarray):
+    def build_grid(self, frame: np.ndarray) -> Tuple[np.ndarray, list[Tuple[int, int]]]:
+        # Get frame dimensions
         img_h = img_h, img_w = frame.shape[:2]
 
         cell_w = img_w // self.GRID_W
         cell_h = img_h // self.GRID_H
 
         logic_grid = np.zeros((self.GRID_H, self.GRID_W), dtype=int)
+
+        # Find snake body
+        snake_body = []
 
         for r in range(self.GRID_H):
             for c in range(self.GRID_W):
@@ -36,8 +40,7 @@ class GameMap:
                 if is_snake_body:
                     logic_grid[r, c] = 1  # Mark as Obstacle
 
-                    # VISUAL DEBUG
-                    cv.circle(frame, (center_x, center_y), 2, (0, 0, 255), -1)
+                    snake_body.append((center_y, center_x))
         # Pad the grid
         logic_grid = np.pad(logic_grid, pad_width=1, mode="constant", constant_values=1)
-        return logic_grid
+        return logic_grid, snake_body

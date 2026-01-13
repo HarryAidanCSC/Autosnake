@@ -2,9 +2,17 @@ import cv2 as cv
 import numpy as np
 from pyscrcpy import Client
 import time
-import utils.kill_button
+
+# import utils.kill_button
 import keyboard
 from pyscrcpy import const
+import os
+import sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
+from utils import kill_button
 
 # Helper Mapping for Snake
 KEYS = {
