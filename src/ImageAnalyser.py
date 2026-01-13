@@ -6,9 +6,9 @@ from cv2.typing import MatLike, Point
 from utils.masking import apply_morpho_masking
 
 
-class TemplateGetter:
+class ImageAnalyser:
 
-    def __init__(self, greyscale: bool = True) -> None:
+    def __init__(self, greyscale: bool = False) -> None:
         self.GREYSCALE = greyscale
 
     def _read_image(self, file_path: str) -> MatLike:
@@ -170,8 +170,7 @@ class TemplateGetter:
                     cy_local = int(M["m01"] / M["m00"])
                     return (x + cx_local, y + cy_local)
 
-        # Fallback: Use the center of the largest contour
-        # This ensures we always return a position even if eyes aren't detected
+        #  Use the center of the largest contour
         M = cv.moments(largest_contour)
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])

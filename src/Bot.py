@@ -11,12 +11,13 @@ from typing import Callable, Tuple, Optional
 from cv2.typing import MatLike, Point
 
 # Custom
-from TemplateGetter import TemplateGetter
+from ImageAnalyser import ImageAnalyser
 from GameMap import GameMap
 from solve_grid import breadth_first_search
 from FrameRenderer import FrameRender
 from utils.verify_phone import check_device_connection, AndroidConnectionError
 from utils.kill_button import kill_button
+from SetupMerchant import SetupMerchant
 
 
 class Bot:
@@ -62,17 +63,18 @@ class Bot:
         }
 
         # Initalise image calibration
-        self.template_getter = TemplateGetter(greyscale=greyscale)
+
+        self.image_analyser = ImageAnalyser(greyscale=greyscale)
         self.greyscale = greyscale
 
         # Run hotkey in background
         keyboard.add_hotkey("esc", kill_button)
 
         # Load templates
-        self.snake_head_templates = self.template_getter.get_image_and_rotations(
+        self.snake_head_templates = self.image_analyser.get_image_and_rotations(
             file_path=snake_file_path
         )
-        self.apple_template = self.template_getter.get_image_and_scaled(
+        self.apple_template = self.image_analyser.get_image_and_scaled(
             file_path=apple_file_path, scales=[0.9, 1.0, 1.1]
         )
 
@@ -84,116 +86,32 @@ class Bot:
 
         # Original phone dimensions - adjust as needed
         self.PHONE_RESOLUTION = (1080, 2408)
+        self.setup_merchant = SetupMerchant(
+            client_config={
+                "max_size": self.max_size,
+                "bitrate": self.bitrate,
+                "max_fps": self.max_fps,
+            }
+        )
 
         # Define trim values for cropping the frame
-        self.left_crop, self.right_crop, self.top_crop, self.bottom_crop = (
-            self._calibrate_capture_region(cog_file_path=cog_file_path)
+        self.setup_merchant.calibrate_capture_region(
+            cog_file_path=cog_file_path, restart_callback=self._restart
         )
 
-        # New capture width for the cropped region
-        self.CAPTURE_WIDTH, self.CAPTURE_HEIGHT = (
-            self.right_crop - self.left_crop,
-            self.bottom_crop - self.top_crop,
-        )
         # Calculate width of each cell
         self.frame_renderer = FrameRender(
-            capture_width=self.CAPTURE_WIDTH,
-            capture_height=self.CAPTURE_HEIGHT,
+            capture_width=self.setup_merchant.cap_w,
+            capture_height=self.setup_merchant.cap_h,
             n_cells_w=self.game_map.GRID_W,
             n_cells_h=self.game_map.GRID_H,
             debug_overlay=visual_debug,
         )
 
-    def _calibrate_capture_region(
-        self, cog_file_path: str
-    ) -> Tuple[int, int, int, int]:
-        """Calibrate existing capture region to JUST the relevant part of the screen
-
-        Arguements:
-            cog_file_path (str): File path of cog icon for template matching.
-        Raises:
-            RuntimeError: Screen grab could not be taken.
-            RuntimeError: Could not find a valid capture region.
-
-        Returns:
-            Tuple[int, int, int, int]: left, right, top and bottom crop coordinates.
-        """
-        self.latest_frame = None  # Ensure we don't have old data
-        self.last_action_time = 0
-
-        # Read in cog image template
-        self.cog_image = self.template_getter._read_image(file_path=cog_file_path)
-
-        # Temporary function that saves the frame
-        def get_one_frame(client: Client, frame: MatLike) -> None:
-            """Function to take one single frame during setup"
-
-            Args:
-                client (Client): Connection to client.
-                frame (MatLike): Current viewing frame.
-            """
-            if frame is None:
-                return
-
-            # Exit if last action was recent
-            if time.time() - self.last_action_time < 1.5:
-                return
-
-            # Check if the frame contains the setting cog icon
-            value, _ = self.template_getter.match_with_template(
-                img=self.cog_image, comparison_frame=frame
-            )
-
-            # If the cog is in frame, press play
-            print(value)
-            if value > self.CONFIDENCE_THRESHOLD:
-                self._restart(client=client)
-                self.last_action_time = time.time()
-                return
-
-            if frame is not None:
-                self.latest_frame = frame
-                self.client.stop()
-
-        self.client.on_frame(get_one_frame)
-        self.client.start(threaded=True)
-
-        #  Wait until we have the first frame
-        start_time = time.time()
-        while self.latest_frame is None:
-            # Emergency exit if it takes too long
-            if time.time() - start_time > 5:
-                raise RuntimeError("Could not capture an inital frame during setup.")
-            time.sleep(0.01)
-
-        # Find the capture region
-        hsv_frame = cv.cvtColor(self.latest_frame, cv.COLOR_BGR2HSV)
-
-        # Kill the client
-        self.client.stop()
-
-        # Colour filtering for playable region
-        capture_region_loc = self.template_getter.get_corners(
-            frame=hsv_frame,
-            lower_bound=[32, 148, 173],
-            upper_bound=[46, 175, 223],
-        )
-
-        if capture_region_loc is None:
-            raise RuntimeError("Could not find the initial start frame.")
-
-        top_left, bottom_right = capture_region_loc
-
-        # Calibrate new capture region
-        return top_left[0], bottom_right[0], top_left[1], bottom_right[1]
-
     def play_snake(self) -> None:
         """Entry point to play a snake repeatedly."""
         # Setup and start
         if not self.client.alive:
-            self.client = Client(
-                max_size=self.max_size, bitrate=self.bitrate, max_fps=self.max_fps
-            )
             on_frame = self._get_on_frame()
             self.client.on_frame(on_frame)
             self.client.start(threaded=True)
@@ -220,13 +138,14 @@ class Bot:
 
             # Crop frame
             frame = frame[
-                self.top_crop : self.bottom_crop, self.left_crop : self.right_crop
+                self.setup_merchant.tpx : self.setup_merchant.bpx,
+                self.setup_merchant.lpx : self.setup_merchant.rpx,
             ]
             # Convert frame to greyscale for matching (only for template matching)
             hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
 
             # Colour filtering for snake head
-            head_loc = self.template_getter.colour_filtering(
+            head_loc = self.image_analyser.colour_filtering(
                 frame=hsv_frame,
                 lower_bound=[83, 0, 190],
                 upper_bound=[128, 173, 255],
@@ -259,7 +178,7 @@ class Bot:
             else:
                 snake_pos = None
 
-            apl_loc = self.template_getter.colour_filtering(
+            apl_loc = self.image_analyser.colour_filtering(
                 frame=hsv_frame,
                 lower_bound=[4, 155, 191],
                 upper_bound=[10, 241, 252],
@@ -363,7 +282,7 @@ class Bot:
             img, w, h = collection
 
             # Closest match
-            max_val, max_loc = self.template_getter.match_with_template(
+            max_val, max_loc = self.image_analyser.match_with_template(
                 img=img, comparison_frame=comparison_frame
             )
 
@@ -422,7 +341,8 @@ if __name__ == "__main__":
             max_fps=20,
             visual_debug=True,
         )
-        bot.play_snake()
+        bot.setup_merchant.foo()
+        # bot.play_snake()
     except AndroidConnectionError as e:
         print(f"Error: {e}")
     except Exception as e:
