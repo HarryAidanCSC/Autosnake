@@ -1,9 +1,8 @@
 # Third-Party
 import cv2 as cv
 import numpy as np
-from pyscrcpy import Client, const
+from pyscrcpy import Client
 import time
-import os
 import keyboard
 
 # Type Hints
@@ -15,6 +14,7 @@ from ImageAnalyser import ImageAnalyser
 from GameMap import GameMap
 from solve_grid import breadth_first_search
 from FrameMerchant import FrameMerchant
+from GymBro import GymBro
 from utils.verify_phone import check_device_connection, AndroidConnectionError
 from utils.kill_button import kill_button
 
@@ -78,7 +78,13 @@ class Bot:
             grid_nc_nr=self.frame_merchant.get_grid_dims(),
             grid_hpx_wpx=self.frame_merchant.get_cell_dims(),
         )
+
+        # Initialise client control (GymBro handles all device interactions)
+        device_h, device_w = self.frame_merchant.get_original_device_px()
         self.client = Client(max_size=max_size, bitrate=bitrate, max_fps=max_fps)
+        self.gym_bro = GymBro(
+            client=self.client, device_dimensions=(device_h, device_w)
+        )
 
         # Define movement directions for bot
         # dn=north(up), ds=south(down), de=east(right), dw=west(left)
@@ -92,13 +98,13 @@ class Bot:
         self.opposite_dir = {"dn": "ds", "ds": "dn", "dw": "de", "de": "dw"}
         self.cur_dir = "de"
 
-        # Movement directions for client
-        self.KEYS = {
-            "dn": const.KEYCODE_DPAD_UP,
-            "ds": const.KEYCODE_DPAD_DOWN,
-            "dw": const.KEYCODE_DPAD_LEFT,
-            "de": const.KEYCODE_DPAD_RIGHT,
-        }
+        # Movement settings
+        self.MOVE_COOLDOWN_SECONDS = 0.15  # Minimum time between moves
+
+        # Score tracking
+        self.max_score = 0
+        self.cur_score = 0
+        self.last_apple_pos = None  # Track apple position to detect when eaten
 
         # Fill debug & pathfinding with inital dummy values
         self.snake_snoot_coords = (None, None)
@@ -121,6 +127,7 @@ class Bot:
             while True:
                 time.sleep(1)
         except:
+            self.display_final_score()
             self.client.stop()
             cv.destroyAllWindows()
             kill_button()
@@ -197,8 +204,10 @@ class Bot:
                 time.time() - self.time_of_last_move > 3
                 and self.BOT_CAN_PLAY_AUTONOMOUSLY
             ):
-                print("Play Again")
+                print(f"Score: {max(0, self.cur_score - 2)}. Play Again")
                 self.time_of_last_move = time.time()
+                self.max_score = max(self.max_score, max(0, self.cur_score - 2))
+                self.cur_score = 0
                 self._restart(client=client)
 
             # Crop frame
@@ -233,6 +242,13 @@ class Bot:
                 cv.imshow("Bot Vision", frame)
 
             if snake_pos and apl_pos:
+                # Did snake eat apple
+                if self.last_apple_pos is not None and self.last_apple_pos != apl_pos:
+                    self.cur_score += 1
+
+                # Update last known apple position
+                self.last_apple_pos = apl_pos
+
                 # Calculate the exact tip of the snake's nose based on movement direction
                 snake_snooter_tip = self._get_snake_snooter_tip(snake_pos, self.cur_dir)
 
@@ -293,9 +309,6 @@ class Bot:
             # Move the snake
             self._move_snake()
 
-            # Update time
-            self.time_of_last_move = time.time()
-
     def _move_snake(self) -> None:
 
         if not self.BOT_CAN_PLAY_AUTONOMOUSLY:
@@ -303,6 +316,11 @@ class Bot:
 
         if self.snake_snoot_coords[0] is None:
             return
+
+        # Rate limiting: check if enough time has passed since last move
+        time_since_last_move = time.time() - self.time_of_last_move
+        if time_since_last_move < self.MOVE_COOLDOWN_SECONDS:
+            return  # Too soon to move again
 
         dx = self.cur_path[0][0] - self.snake_snoot_coords[0]
         dy = self.cur_path[0][1] - self.snake_snoot_coords[1]
@@ -314,12 +332,12 @@ class Bot:
         if new_dir == opposite_from_cur:
             return
 
-        code = self.KEYS.get(new_dir)
+        # Send movement command
+        self.gym_bro.send_direction(new_dir)
 
-        if code and new_dir:
-            self.cur_dir = new_dir
-            self.client.control.keycode(code, const.ACTION_DOWN)
-            self.client.control.keycode(code, const.ACTION_UP)
+        # Update current direction and timestamp
+        self.cur_dir = new_dir
+        self.time_of_last_move = time.time()
 
     def _get_snake_snooter_tip(
         self, snake_head_pos: Tuple[int, int], direction: str
@@ -336,62 +354,33 @@ class Bot:
         x, y = snake_head_pos
 
         # Adjust position based on which direction the snake is moving
-        # This gives us the leading edge of the snake head
         match direction:
-            case "dn":  # Moving north (up) - tip is at top
+            case "dn":
                 return (x, y - 1) if y > 0 else (x, y)
-            case "ds":  # Moving south (down) - tip is at bottom
+            case "ds":
                 return (x, y + 1)
-            case "de":  # Moving east (right) - tip is at right
+            case "de":
                 return (x + 1, y)
-            case "dw":  # Moving west (left) - tip is at left
+            case "dw":
                 return (x - 1, y) if x > 0 else (x, y)
-            case _:  # Default: return center position
+            case _:  # Default: return centre position
                 return (x, y)
 
     def _interact_with_client(self, client: Client, key: str) -> None:
         """
-        Instantly turns the snake.
-        direction: "n", "s", "w", "e"
+        Handle manual keyboard input via GymBro.
         """
-        possible_keys = {"w", "a", "s", "d", "e"}
-        # Map WASD to NESW
-        code, new_dir = None, None
+        new_dir, restart_requested = self.gym_bro.handle_manual_input(
+            key=key, current_direction=self.cur_dir, opposite_dir_map=self.opposite_dir
+        )
 
-        # Protect against impossible movements
-        opposite_from_cur = self.opposite_dir.get(self.cur_dir)
-        if key not in possible_keys or key == opposite_from_cur:
-            return
-
-        match key:
-            case "w":
-                code = self.KEYS.get("dn")
-                new_dir = "dn"
-            case "a":
-                code = self.KEYS.get("dw")
-                new_dir = "dw"
-            case "s":
-                code = self.KEYS.get("ds")
-                new_dir = "ds"
-            case "d":
-                code = self.KEYS.get("de")
-                new_dir = "de"
-            case "e":
-                self.cur_dir = "de"
-                self._restart(client)
-
-        if new_dir == opposite_from_cur:
-            return
-        if code and new_dir:
+        # Update direction if changed
+        if new_dir != self.cur_dir:
             self.cur_dir = new_dir
-            client.control.keycode(code, const.ACTION_DOWN)
-            client.control.keycode(code, const.ACTION_UP)
 
     def _restart(self, client: Client) -> None:
-        h, w = self.frame_merchant.get_original_device_px()
-        x_coord = int(w * 0.463)
-        y_coord = int(h * 0.701)
-        client.control.touch(x_coord, y_coord)
+        """Restart the game via GymBro."""
+        self.gym_bro.restart_game()
 
     def _render_soul(self, frame: MatLike) -> None:
         self.frame_merchant.render_multi_coordinates(
@@ -418,8 +407,14 @@ class Bot:
                 is_grid_coords=True,
             )
 
+    def display_final_score(self) -> None:
+        print("=" * 60)
+        print(f"Final Score: {self.max_score}")
+        print("=" * 60)
+
 
 if __name__ == "__main__":
+    bot = None
     try:
         # Check device is connected before playing
         check_device_connection()
@@ -439,4 +434,9 @@ if __name__ == "__main__":
         print(f"Error: {e}")
     except Exception as e:
         print(f"Error: {e}")
+        if bot:
+            bot.display_final_score()
         kill_button()
+    finally:
+        if bot:
+            bot.display_final_score()
