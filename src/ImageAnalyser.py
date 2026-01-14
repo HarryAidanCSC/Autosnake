@@ -61,7 +61,7 @@ class ImageAnalyser:
         Returns:
             (x, y, w, h) position and dimensions of the detected object, or None if not found.
         """
-        # Create color mask
+        # Create colour mask
         lower_bound_np = np.array(lower_bound, dtype="uint8")
         upper_bound_np = np.array(upper_bound, dtype="uint8")
 
@@ -113,7 +113,7 @@ class ImageAnalyser:
         is_snake_head=False,
     ) -> Optional[Tuple[int, int, int, int]]:
         """
-        Detect an object  by color filtering in HSV space.
+        Detect an object  by colour filtering in HSV space.
 
         Args:
             frame: BGR image frame
@@ -121,7 +121,7 @@ class ImageAnalyser:
             upper_bound: Upper HSV bound as [H, S, V]
 
         Returns:
-            (x, y) position of the detected object's center, or None if not found
+            (x, y) position of the detected object's centre, or None if not found
         """
 
         # First locate contours
@@ -140,7 +140,7 @@ class ImageAnalyser:
         # Extract ROI for eye detection
         roi_hsv = frame[y : y + h, x : x + w]
 
-        # Detect white/light colored eyes
+        # Detect white/light coloured eyes
         # Adjusted thresholds for better eye detection
         lower_bound_white = np.array([0, 0, 180], dtype="uint8")
         upper_bound_white = np.array([180, 60, 255], dtype="uint8")
@@ -161,7 +161,7 @@ class ImageAnalyser:
             valid_eyes = [c for c in contours_eyes if cv.contourArea(c) > 5]
 
             if valid_eyes:
-                # Calculate center of all eye contours
+                # Calculate centre of all eye contours
                 all_eyes = np.concatenate(valid_eyes)
                 M = cv.moments(all_eyes)
 
@@ -170,14 +170,14 @@ class ImageAnalyser:
                     cy_local = int(M["m01"] / M["m00"])
                     return (x + cx_local, y + cy_local, w, h)
 
-        #  Use the center of the largest contour
+        #  Use the centre of the largest contour
         M = cv.moments(largest_contour)
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
             return (cx, cy, w, h)
 
-        # Final fallback: Use bounding box center
+        # Final fallback: Use bounding box centre
         return (x + w // 2, y + h // 2, w, h)
 
     def match_with_template(

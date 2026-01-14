@@ -49,7 +49,7 @@ class Bot:
         self.bitrate = bitrate
         self.max_fps = max_fps
 
-        # Initalise image calibration
+        # Initialise image calibration
         self.image_analyser = ImageAnalyser()
 
         # Run hotkey in background
@@ -80,7 +80,13 @@ class Bot:
 
         # Define movement directions for bot
         # dn=north(up), ds=south(down), de=east(right), dw=west(left)
-        self.dirs = {"dn": (0, -1), "ds": (0, 1), "de": (1, 0), "dw": (-1, 0)}  # x, y
+        self.dirs = {"dn": (0, -1), "ds": (0, 1), "de": (1, 0), "dw": (-1, 0)}  # x,y
+        self.dirs_alt = {
+            (0, -1): "dn",
+            (0, 1): "ds",
+            (1, 0): "de",
+            (-1, 0): "dw",
+        }  # x,y
         self.opposite_dir = {"dn": "ds", "ds": "dn", "dw": "de", "de": "dw"}
         self.cur_dir = "de"
 
@@ -276,6 +282,27 @@ class Bot:
 
             # Move the snake
             print(self.cur_path[0], self.snake_snoot_coords)
+            self._move_snake()
+
+    def _move_snake(self) -> None:
+        if self.snake_snoot_coords[0] is None:
+            return
+        dx = self.cur_path[0][0] - self.snake_snoot_coords[0]
+        dy = self.cur_path[0][1] - self.snake_snoot_coords[1]
+
+        # Which direction to move in
+        new_dir = self.dirs_alt[(dx, dy)]
+        opposite_from_cur = self.opposite_dir.get(self.cur_dir)
+
+        if new_dir == opposite_from_cur:
+            return
+
+        code = self.KEYS.get(new_dir)
+
+        if code and new_dir:
+            self.cur_dir = new_dir
+            self.client.control.keycode(code, const.ACTION_DOWN)
+            self.client.control.keycode(code, const.ACTION_UP)
 
     def _get_snake_snooter_tip(
         self, snake_head_pos: Tuple[int, int], direction: str
@@ -362,6 +389,15 @@ class Bot:
                 frame=frame,
                 coordinates=self.cur_path,
                 colour_key="path",
+                is_grid_coords=True,
+            )
+
+        # Debug: Show current snoot position
+        if self.snake_snoot_coords[0] is not None:
+            self.frame_merchant.render_multi_coordinates(
+                frame=frame,
+                coordinates=[self.snake_snoot_coords],
+                colour_key="snoot",
                 is_grid_coords=True,
             )
 

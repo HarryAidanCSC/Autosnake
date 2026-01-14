@@ -41,7 +41,7 @@ def move_snake(client, direction):
 def on_frame(client, frame):
     """
     This function runs every time the phone sends a new video frame.
-    frame: A numpy array representing the image (BGR color)
+    frame: A numpy array representing the image (BGR colour)
     """
     if frame is None:
         print("na")

@@ -9,9 +9,9 @@ def nothing(x: Any) -> None:
     pass
 
 
-def tune_hsv_color(image_path: str) -> None:
+def tune_hsv_colour(image_path: str) -> None:
     """
-    Interactive HSV color tuner
+    Interactive HSV colour tuner
 
     Args:
         image_path: Path to a screenshot containing the snake
@@ -73,7 +73,7 @@ def tune_hsv_color(image_path: str) -> None:
                     result_with_contours, (x, y), (x + w, y + h), (0, 255, 0), 2
                 )
 
-                # Calculate and show center
+                # Calculate and show centre
                 M = cv.moments(largest)
                 if M["m00"] != 0:
                     cx = int(M["m10"] / M["m00"])
@@ -136,4 +136,4 @@ def tune_hsv_color(image_path: str) -> None:
 
 if __name__ == "__main__":
     image_path = "debug_screenshot.png"
-    tune_hsv_color(image_path)
+    tune_hsv_colour(image_path)

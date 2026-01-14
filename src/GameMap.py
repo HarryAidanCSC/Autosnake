@@ -13,7 +13,7 @@ class GameMap:
             row = []
             for c in range(self.NCOLS):
 
-                # Calculate center of this cell
+                # Calculate centre of this cell
                 centre_x = int(c * self.CELL_WPX + self.CELL_WPX / 2)
                 centre_y = int(r * self.CELL_HPX + self.CELL_HPX / 2)
 
@@ -51,7 +51,7 @@ class GameMap:
                 if is_snake_body:
                     logic_grid[r, c] = 1  # Mark as Obstacle
 
-                    snake_body.append((centre_x, centre_y))  # (x, y) format
+                    snake_body.append((centre_x, centre_y))
         # Pad the grid
         logic_grid = np.pad(logic_grid, pad_width=1, mode="constant", constant_values=1)
         return logic_grid, snake_body

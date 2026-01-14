@@ -20,7 +20,7 @@ class CropAdjuster:
         self.bottom = 480
 
         # Colouring
-        self.overlay_color = (255, 0, 255)  # Magenta
+        self.overlay_colour = (255, 0, 255)  # Magenta
         self.overlay_alpha = 0.4
 
     def start_video_feed(self) -> None:
@@ -112,7 +112,7 @@ class CropAdjuster:
             overlay = frame.copy()
 
             # Draw filled rectangle in magenta
-            cv.rectangle(overlay, (left, top), (right, bottom), self.overlay_color, -1)
+            cv.rectangle(overlay, (left, top), (right, bottom), self.overlay_colour, -1)
 
             # Blend overlay with original frame for transparency
             display_frame = cv.addWeighted(
@@ -121,7 +121,7 @@ class CropAdjuster:
 
             # Draw outline for clear boundary
             cv.rectangle(
-                display_frame, (left, top), (right, bottom), self.overlay_color, 1
+                display_frame, (left, top), (right, bottom), self.overlay_colour, 1
             )
 
             # Add text overlay with current values

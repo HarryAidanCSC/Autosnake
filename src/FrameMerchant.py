@@ -51,10 +51,11 @@ class FrameMerchant:
         self.colours: DefaultDict[str, Tuple[int, int, int]] = defaultdict(
             lambda: (0, 0, 0)
         )  # Default to black
-        self.colours["path"] = (255, 0, 255)
-        self.colours["snake"] = (0, 0, 255)
-        self.colours["apple"] = (0, 255, 0)
-        self.colours["snakehead"] = (255, 0, 0)
+        self.colours["path"] = (255, 0, 255)  # Magenta
+        self.colours["snake"] = (0, 0, 255)  # Red
+        self.colours["apple"] = (0, 255, 0)  # Green
+        self.colours["snakehead"] = (255, 0, 0)  # Blue
+        self.colours["snoot"] = (0, 215, 255)  # Gold (BGR format)
 
     def _parse_yaml(self, file_path: str) -> Optional[dict]:
         """Parse config yaml to setup dimensions.
@@ -195,7 +196,7 @@ class FrameMerchant:
             if is_grid_coords:
                 x, y = self._coords_to_pixels(grid_x=x, grid_y=y)
 
-            cv.circle(frame, (x, y), 3, colour, -1)  # OpenCV uses (x, y)
+            cv.circle(frame, (x, y), 3, colour, -1) 
 
     def get_grid_dims(self) -> Tuple[int, int]:
         """Return number of columns and rows."""
