@@ -255,7 +255,6 @@ class Bot:
         snake_snooter_tip: Tuple[int, int],
         apl_pos: Tuple[int, int],
     ) -> None:
-        print("x")
         # Pathfinding
         self.grid, self.snake_body = self.game_map.build_grid(
             frame=frame,
@@ -269,10 +268,14 @@ class Bot:
             start_y=self.snake_snoot_coords[1] + 1,  # Add 1 for padding
             goal_x=apl_pos[0] + 1,  # Add 1 for padding
             goal_y=apl_pos[1] + 1,  # Add 1 for padding
+            current_direction=self.dirs[self.cur_dir],
         )
         if path:
             unpadded_path = [(x - 1, y - 1) for x, y in path]
             self.cur_path = unpadded_path
+
+            # Move the snake
+            print(self.cur_path[0], self.snake_snoot_coords)
 
     def _get_snake_snooter_tip(
         self, snake_head_pos: Tuple[int, int], direction: str

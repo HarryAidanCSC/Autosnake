@@ -195,7 +195,7 @@ class FrameMerchant:
             if is_grid_coords:
                 x, y = self._coords_to_pixels(grid_x=x, grid_y=y)
 
-            cv.circle(frame, (y, x), 3, colour, -1)
+            cv.circle(frame, (x, y), 3, colour, -1)  # OpenCV uses (x, y)
 
     def get_grid_dims(self) -> Tuple[int, int]:
         """Return number of columns and rows."""

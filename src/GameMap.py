@@ -51,7 +51,7 @@ class GameMap:
                 if is_snake_body:
                     logic_grid[r, c] = 1  # Mark as Obstacle
 
-                    snake_body.append((centre_y, centre_x))
+                    snake_body.append((centre_x, centre_y))  # (x, y) format
         # Pad the grid
         logic_grid = np.pad(logic_grid, pad_width=1, mode="constant", constant_values=1)
         return logic_grid, snake_body
