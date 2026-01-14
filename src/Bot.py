@@ -24,6 +24,7 @@ class Bot:
 
     def __init__(
         self,
+        let_bot_take_control: bool,
         map_config: str,
         max_size: int = 480,
         bitrate: int = 800000,
@@ -33,6 +34,7 @@ class Bot:
         """Construct a new Bot to play Snake.
 
         Args:
+            let_bot_take_control (bool): Give control of your phone over to the bot for Snake. BE CAREFUL!
             map_config (str): Custom YAML name of map type.
             max_size (int, optional): Maximum number of pixels for the phone's x/y. Defaults to 480.
             bitrate (int, optional): Rate of data transfer. Defaults to 800000.
@@ -42,7 +44,7 @@ class Bot:
         """
 
         # CONSTANTS
-        self.CONFIDENCE_THRESHOLD = 0.8
+        self.BOT_CAN_PLAY_AUTONOMOUSLY = let_bot_take_control
 
         # Server config
         self.max_size = max_size
@@ -103,6 +105,7 @@ class Bot:
         self.cur_path = []
         self.grid = []
         self.snake_body = []
+        self.time_of_last_move = time.time()
 
     def play_snake(self) -> None:
         """Entry point to play a snake repeatedly."""
@@ -189,6 +192,15 @@ class Bot:
             if frame is None:
                 return
 
+            # If snake is not moving then restart
+            if (
+                time.time() - self.time_of_last_move > 3
+                and self.BOT_CAN_PLAY_AUTONOMOUSLY
+            ):
+                print("Play Again")
+                self.time_of_last_move = time.time()
+                self._restart(client=client)
+
             # Crop frame
             lpx, rpx, tpx, bpx = self.frame_merchant.get_crop_px()
             frame = frame[
@@ -207,7 +219,6 @@ class Bot:
                 colour_key="snakeHead",
                 is_snake_head=True,
             )
-
             # Detect apple
             apl_pos = self._detect_and_process_object(
                 hsv_frame=hsv_frame,
@@ -218,9 +229,8 @@ class Bot:
                 is_snake_head=False,
             )
 
-            if apl_pos is None or snake_pos is None:
+            if apl_pos is None and snake_pos is None:
                 cv.imshow("Bot Vision", frame)
-                return
 
             if snake_pos and apl_pos:
                 # Calculate the exact tip of the snake's nose based on movement direction
@@ -281,12 +291,19 @@ class Bot:
             self.cur_path = unpadded_path
 
             # Move the snake
-            print(self.cur_path[0], self.snake_snoot_coords)
             self._move_snake()
 
+            # Update time
+            self.time_of_last_move = time.time()
+
     def _move_snake(self) -> None:
+
+        if not self.BOT_CAN_PLAY_AUTONOMOUSLY:
+            return
+
         if self.snake_snoot_coords[0] is None:
             return
+
         dx = self.cur_path[0][0] - self.snake_snoot_coords[0]
         dy = self.cur_path[0][1] - self.snake_snoot_coords[1]
 
@@ -408,6 +425,7 @@ if __name__ == "__main__":
         check_device_connection()
 
         bot = Bot(
+            let_bot_take_control=True,
             map_config="small",
             max_size=480,
             bitrate=800000,
