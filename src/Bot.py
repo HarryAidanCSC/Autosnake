@@ -49,16 +49,7 @@ class Bot:
         self.bitrate = bitrate
         self.max_fps = max_fps
 
-        # Movement directions
-        self.KEYS = {
-            "UP": const.KEYCODE_DPAD_UP,
-            "DOWN": const.KEYCODE_DPAD_DOWN,
-            "LEFT": const.KEYCODE_DPAD_LEFT,
-            "RIGHT": const.KEYCODE_DPAD_RIGHT,
-        }
-
         # Initalise image calibration
-
         self.image_analyser = ImageAnalyser()
 
         # Run hotkey in background
@@ -76,6 +67,19 @@ class Bot:
             grid_hpx_wpx=self.frame_merchant.get_cell_dims(),
         )
         self.client = Client(max_size=max_size, bitrate=bitrate, max_fps=max_fps)
+
+        # Define movement directions for bot
+        self.dirs = {"dn": (-1, 0), "ds": (1, 0), "de": (0, 1), "dw": (-1, 0)}
+        self.opposite_dir = {"dn": "ds", "ds": "dn", "dw": "de", "de": "dw"}
+        self.cur_dir = "de"
+
+        # Movement directions for client
+        self.KEYS = {
+            "dn": const.KEYCODE_DPAD_UP,
+            "ds": const.KEYCODE_DPAD_DOWN,
+            "dw": const.KEYCODE_DPAD_LEFT,
+            "de": const.KEYCODE_DPAD_RIGHT,
+        }
 
     def play_snake(self) -> None:
         """Entry point to play a snake repeatedly."""
@@ -119,8 +123,6 @@ class Bot:
                 frame=hsv_frame,
                 lower_bound=[83, 0, 190],
                 upper_bound=[128, 173, 255],
-                # lower_bound=[85, 116, 0],
-                # upper_bound=[113, 174, 255],
                 is_snake_head=True,
             )
 
@@ -213,80 +215,53 @@ class Bot:
 
             # cv.waitKey(1)
             key = cv.waitKey(1) & 0xFF
-            if key == ord("w"):
-                self._move_snake(client, "UP")
-            elif key == ord("a"):
-                self._move_snake(client, "LEFT")
-            elif key == ord("s"):
-                self._move_snake(client, "DOWN")
-            elif key == ord("d"):
-                self._move_snake(client, "RIGHT")
-            elif key == ord("e"):
-                self._restart(client)
+            self._interact_with_client(client=client, key=chr(key))
             if key == ord("s"):
                 cv.imwrite("debug_screenshot.png", frame)
 
         return on_frame
 
-    def _match_best_to_template(
-        self,
-        primary_collection: list[Tuple[MatLike, int, int]],
-        comparison_frame: np.ndarray,
-        colour_key: str,
-        frame: MatLike,
-    ) -> Optional[Point]:
-        """Match an image with another image. If it matches then return the threshold and location.
-
-        Args:
-            primary_collection ([(MatLike, int, int)]: Image(s) to locate the comparison upon.
-            comparison_frame (MatLike): Image to compare.
-            colour_key (str): Name of colour key to display using.
-            frame: (MatLike): Image to display.
-            "
-        """
-        best_val, best_loc, best_w, best_h = 0.0, None, 0, 0
-
-        for collection in primary_collection:
-            img, w, h = collection
-
-            # Closest match
-            max_val, max_loc = self.image_analyser.match_with_template(
-                img=img, comparison_frame=comparison_frame
-            )
-
-            # Keep best match
-            if max_val > best_val:
-                best_val, best_loc, best_w, best_h = (
-                    max_val,
-                    max_loc,
-                    w,
-                    h,
-                )
-
-            # Break condition
-            if best_val >= self.CONFIDENCE_THRESHOLD and best_loc is not None:
-                self.frame_merchant._write_box_on_frame(
-                    frame,
-                    top_left=best_loc,
-                    width=best_w,
-                    height=best_h,
-                    colour_key=colour_key,
-                    text=f"Match: {best_val:.2f}",
-                )
-                return max_loc
-
-            return None
-
-    def _move_snake(self, client: Client, direction: str):
+    def _interact_with_client(self, client: Client, key: str) -> None:
         """
         Instantly turns the snake.
-        direction: "UP", "DOWN", "LEFT", "RIGHT"
+        direction: "n", "s", "w", "e"
         """
-        code = self.KEYS.get(direction)
-        if code:
+        # Ignore default key
+        if key == "ÿ":
+            return
+
+        possible_keys = {"w", "a", "s", "d", "e"}
+        # Map WASD to NESW
+        code, new_dir = None, None
+
+        # Protect against impossible movements
+        opposite_from_cur = self.opposite_dir.get(self.cur_dir)
+        if key not in possible_keys or key == opposite_from_cur:
+            return
+
+        match key:
+            case "w":
+                code = self.KEYS.get("dn")
+                new_dir = "dn"
+            case "a":
+                code = self.KEYS.get("dw")
+                new_dir = "dw"
+            case "s":
+                code = self.KEYS.get("ds")
+                new_dir = "ds"
+            case "d":
+                code = self.KEYS.get("de")
+                new_dir = "de"
+            case "e":
+                self._restart(client)
+
+        if new_dir == opposite_from_cur:
+            return
+        print(new_dir, code)
+        if code and new_dir:
+            self.cur_dir = new_dir
             client.control.keycode(code, const.ACTION_DOWN)
             client.control.keycode(code, const.ACTION_UP)
-        print("Action Done")
 
     def _restart(self, client: Client) -> None:
         h, w = self.frame_merchant.get_original_device_px()
@@ -301,7 +276,7 @@ if __name__ == "__main__":
         check_device_connection()
 
         bot = Bot(
-            map_config="large",
+            map_config="small",
             max_size=480,
             bitrate=800000,
             max_fps=20,
