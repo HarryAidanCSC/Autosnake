@@ -55,6 +55,16 @@ class Bot:
         # Run hotkey in background
         keyboard.add_hotkey("esc", kill_button)
 
+        # Shared state for keyboard input (to be accessed by global hotkeys)
+        self.last_key_pressed = None
+
+        # Register global hotkeys
+        keyboard.on_press_key("w", lambda _: setattr(self, "last_key_pressed", "w"))
+        keyboard.on_press_key("a", lambda _: setattr(self, "last_key_pressed", "a"))
+        keyboard.on_press_key("s", lambda _: setattr(self, "last_key_pressed", "s"))
+        keyboard.on_press_key("d", lambda _: setattr(self, "last_key_pressed", "d"))
+        keyboard.on_press_key("e", lambda _: setattr(self, "last_key_pressed", "e"))
+
         # Calculate width of each cell
         self.frame_merchant = FrameMerchant(
             config_name=map_config,
@@ -69,7 +79,8 @@ class Bot:
         self.client = Client(max_size=max_size, bitrate=bitrate, max_fps=max_fps)
 
         # Define movement directions for bot
-        self.dirs = {"dn": (-1, 0), "ds": (1, 0), "de": (0, 1), "dw": (-1, 0)}
+        # dn=north(up), ds=south(down), de=east(right), dw=west(left)
+        self.dirs = {"dn": (0, -1), "ds": (0, 1), "de": (1, 0), "dw": (-1, 0)}  # x, y
         self.opposite_dir = {"dn": "ds", "ds": "dn", "dw": "de", "de": "dw"}
         self.cur_dir = "de"
 
@@ -80,6 +91,12 @@ class Bot:
             "dw": const.KEYCODE_DPAD_LEFT,
             "de": const.KEYCODE_DPAD_RIGHT,
         }
+
+        # Fill debug & pathfinding with inital dummy values
+        self.snake_snoot_coords = (None, None)
+        self.cur_path = []
+        self.grid = []
+        self.snake_body = []
 
     def play_snake(self) -> None:
         """Entry point to play a snake repeatedly."""
@@ -101,6 +118,63 @@ class Bot:
         finally:
             self.client.stop()
 
+    def _detect_and_process_object(
+        self,
+        hsv_frame: np.ndarray,
+        frame: np.ndarray,
+        lower_bound: list[int],
+        upper_bound: list[int],
+        colour_key: str,
+        is_snake_head: bool = False,
+    ) -> Optional[Tuple[int, int]]:
+        """Detect an object using color filtering and return its grid coordinates.
+
+        Args:
+            hsv_frame (np.ndarray): HSV color space frame for filtering
+            frame (np.ndarray): Original frame for drawing debug overlay
+            lower_bound (list[int]): Lower HSV bounds for color filtering
+            upper_bound (list[int]): Upper HSV bounds for color filtering
+            colour_key (str): Color key for debug visualization
+            is_snake_head (bool): Whether this is detecting the snake head
+
+        Returns:
+            Optional[Tuple[int, int]]: Grid coordinates (x, y) or None if not found
+        """
+        obj_loc = self.image_analyser.colour_filtering(
+            frame=hsv_frame,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+            is_snake_head=is_snake_head,
+        )
+
+        if obj_loc is None:
+            return None
+
+        # Extract width and height
+        obj_w = obj_loc[2]
+        obj_h = obj_loc[3]
+
+        # Convert center to top-left corner
+        top_left_x = obj_loc[0] - (obj_w // 2)
+        top_left_y = obj_loc[1] - (obj_h // 2)
+        top_left = (top_left_x, top_left_y)
+
+        # Draw debug overlay
+        self.frame_merchant._write_box_on_frame(
+            frame,
+            top_left=top_left,
+            width=obj_w,
+            height=obj_h,
+            colour_key=colour_key,
+        )
+
+        # Convert to grid coordinates
+        grid_coords = self.frame_merchant._pixel_to_coords(
+            x=top_left_x, y=top_left_y, width=obj_w, height=obj_h
+        )
+
+        return grid_coords
+
     def _get_on_frame(self) -> Callable[[Client, np.ndarray], None]:
 
         def on_frame(client: Client, frame: np.ndarray) -> None:
@@ -118,118 +192,121 @@ class Bot:
             # Convert frame to greyscale for matching (only for template matching)
             hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
 
-            # Colour filtering for snake head
-            head_loc = self.image_analyser.colour_filtering(
-                frame=hsv_frame,
+            # Detect snake head
+            snake_pos = self._detect_and_process_object(
+                hsv_frame=hsv_frame,
+                frame=frame,
                 lower_bound=[83, 0, 190],
                 upper_bound=[128, 173, 255],
+                colour_key="snakeHead",
                 is_snake_head=True,
             )
 
-            if head_loc is not None:
-                hw = head_loc[2]
-                hh = head_loc[3]
-
-                # Convert center to top-left corner
-                top_left_x = head_loc[0] - (hw // 2)
-                top_left_y = head_loc[1] - (hh // 2)
-                top_left = (top_left_x, top_left_y)
-
-                self.frame_merchant._write_box_on_frame(
-                    frame,
-                    top_left=top_left,
-                    width=hw,
-                    height=hh,
-                    colour_key="snakeHead",
-                )
-
-                # For grid mapping, pass the top-left corner
-                snake_pos = self.frame_merchant._pixel_to_coords(
-                    x=top_left_x, y=top_left_y, width=hw, height=hh
-                )
-            else:
-                snake_pos = None
-
-            apl_loc = self.image_analyser.colour_filtering(
-                frame=hsv_frame,
+            # Detect apple
+            apl_pos = self._detect_and_process_object(
+                hsv_frame=hsv_frame,
+                frame=frame,
                 lower_bound=[4, 155, 191],
                 upper_bound=[10, 241, 252],
+                colour_key="apple",
+                is_snake_head=False,
             )
 
-            if apl_loc is not None:
-                aw = apl_loc[2]
-                ah = apl_loc[3]
-
-                # Convert center to top-left corner
-                top_left_x = apl_loc[0] - (aw // 2)
-                top_left_y = apl_loc[1] - (ah // 2)
-                top_left = (top_left_x, top_left_y)
-
-                self.frame_merchant._write_box_on_frame(
-                    frame,
-                    top_left=top_left,
-                    width=aw,
-                    height=ah,
-                    colour_key="apple",
-                )
-
-                # Use top-left for grid mapping (same as snake head)
-                apl_pos = self.frame_merchant._pixel_to_coords(
-                    top_left_x, top_left_y, width=aw, height=ah
-                )
-            else:
-                apl_pos = None
-
-            # Pathfinding
-            grid, snake_body = self.game_map.build_grid(frame)
-
-            # Render snake's body for debugger
-            self.frame_merchant.render_multi_coordinates(
-                frame=frame,
-                coordinates=snake_body,
-                colour_key="snake",
-                is_grid_coords=False,
-            )
+            if apl_pos is None or snake_pos is None:
+                cv.imshow("Bot Vision", frame)
+                return
 
             if snake_pos and apl_pos:
-                path = breadth_first_search(
-                    grid=grid,
-                    start_x=snake_pos[0] + 1,  # Add 1 for padding
-                    start_y=snake_pos[1] + 1,  # Add 1 for padding
-                    goal_x=apl_pos[0] + 1,  # Add 1 for padding
-                    goal_y=apl_pos[1] + 1,  # Add 1 for padding
-                )
-                if path:
-                    # Convert back to unpadded coordinates for rendering
-                    unpadded_path = [(x - 1, y - 1) for x, y in path]
+                # Calculate the exact tip of the snake's nose based on movement direction
+                snake_snooter_tip = self._get_snake_snooter_tip(snake_pos, self.cur_dir)
 
-                    self.frame_merchant.render_multi_coordinates(
+                # Don't pathfind if still in the same square
+                if snake_snooter_tip != self.snake_snoot_coords:
+                    self._on_new_cell(
                         frame=frame,
-                        coordinates=unpadded_path,
-                        colour_key="path",
-                        is_grid_coords=True,
+                        snake_snooter_tip=snake_snooter_tip,
+                        apl_pos=apl_pos,
                     )
+
+            # Render Everything
+            self._render_soul(frame=frame)
 
             # Show the video feed with the overlay
             cv.imshow("Bot Vision", frame)
+            cv.waitKey(1)
 
-            # cv.waitKey(1)
-            key = cv.waitKey(1) & 0xFF
-            self._interact_with_client(client=client, key=chr(key))
-            if key == ord("s"):
-                cv.imwrite("debug_screenshot.png", frame)
+            # Check for keyboard input from global state
+            if self.last_key_pressed:
+                key = self.last_key_pressed
+                self.last_key_pressed = None
+
+                # Screenshot
+                if key == "s":
+                    cv.imwrite("debug_screenshot.png", frame)
+
+                # Handle movement and restart commands
+                self._interact_with_client(client=client, key=key)
 
         return on_frame
+
+    def _on_new_cell(
+        self,
+        frame: MatLike,
+        snake_snooter_tip: Tuple[int, int],
+        apl_pos: Tuple[int, int],
+    ) -> None:
+        print("x")
+        # Pathfinding
+        self.grid, self.snake_body = self.game_map.build_grid(
+            frame=frame,
+        )
+
+        self.snake_snoot_coords = snake_snooter_tip
+
+        path = breadth_first_search(
+            grid=self.grid,
+            start_x=self.snake_snoot_coords[0] + 1,  # Add 1 for padding
+            start_y=self.snake_snoot_coords[1] + 1,  # Add 1 for padding
+            goal_x=apl_pos[0] + 1,  # Add 1 for padding
+            goal_y=apl_pos[1] + 1,  # Add 1 for padding
+        )
+        if path:
+            unpadded_path = [(x - 1, y - 1) for x, y in path]
+            self.cur_path = unpadded_path
+
+    def _get_snake_snooter_tip(
+        self, snake_head_pos: Tuple[int, int], direction: str
+    ) -> Tuple[int, int]:
+        """Calculate the exact tip of the snake's nose based on movement direction.
+
+        Args:
+            snake_head_pos (Tuple[int, int]): Center grid coordinates of snake head (x, y)
+            direction (str): Current movement direction ("dn", "ds", "de", "dw")
+
+        Returns:
+            Tuple[int, int]: Grid coordinates of the snake's nose tip (x, y)
+        """
+        x, y = snake_head_pos
+
+        # Adjust position based on which direction the snake is moving
+        # This gives us the leading edge of the snake head
+        match direction:
+            case "dn":  # Moving north (up) - tip is at top
+                return (x, y - 1) if y > 0 else (x, y)
+            case "ds":  # Moving south (down) - tip is at bottom
+                return (x, y + 1)
+            case "de":  # Moving east (right) - tip is at right
+                return (x + 1, y)
+            case "dw":  # Moving west (left) - tip is at left
+                return (x - 1, y) if x > 0 else (x, y)
+            case _:  # Default: return center position
+                return (x, y)
 
     def _interact_with_client(self, client: Client, key: str) -> None:
         """
         Instantly turns the snake.
         direction: "n", "s", "w", "e"
         """
-        # Ignore default key
-        if key == "ÿ":
-            return
-
         possible_keys = {"w", "a", "s", "d", "e"}
         # Map WASD to NESW
         code, new_dir = None, None
@@ -253,11 +330,11 @@ class Bot:
                 code = self.KEYS.get("de")
                 new_dir = "de"
             case "e":
+                self.cur_dir = "de"
                 self._restart(client)
 
         if new_dir == opposite_from_cur:
             return
-        print(new_dir, code)
         if code and new_dir:
             self.cur_dir = new_dir
             client.control.keycode(code, const.ACTION_DOWN)
@@ -268,6 +345,22 @@ class Bot:
         x_coord = int(w * 0.463)
         y_coord = int(h * 0.701)
         client.control.touch(x_coord, y_coord)
+
+    def _render_soul(self, frame: MatLike) -> None:
+        self.frame_merchant.render_multi_coordinates(
+            frame=frame,
+            coordinates=self.snake_body,
+            colour_key="snake",
+            is_grid_coords=False,
+        )
+
+        if self.cur_path:
+            self.frame_merchant.render_multi_coordinates(
+                frame=frame,
+                coordinates=self.cur_path,
+                colour_key="path",
+                is_grid_coords=True,
+            )
 
 
 if __name__ == "__main__":

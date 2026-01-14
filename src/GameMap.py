@@ -1,5 +1,6 @@
 import numpy as np
 from typing import Tuple
+from cv2.typing import MatLike
 
 
 class GameMap:
@@ -19,10 +20,12 @@ class GameMap:
                 row.append((centre_x, centre_y))
             self.centre_coords.append(row)
 
-    def build_grid(self, frame: np.ndarray) -> Tuple[np.ndarray, list[Tuple[int, int]]]:
+    def build_grid(
+        self,
+        frame: MatLike,
+    ) -> Tuple[np.ndarray, list[Tuple[int, int]]]:
         # Get frame dimensions
         img_h, img_w = frame.shape[:2]
-
         # Create logic grid
         logic_grid = np.zeros((self.NROWS, self.NCOLS), dtype=int)
 
@@ -52,6 +55,3 @@ class GameMap:
         # Pad the grid
         logic_grid = np.pad(logic_grid, pad_width=1, mode="constant", constant_values=1)
         return logic_grid, snake_body
-
-    def snooter_elimination_unit(self):
-        pass
