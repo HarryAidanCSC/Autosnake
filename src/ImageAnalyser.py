@@ -111,7 +111,7 @@ class ImageAnalyser:
         lower_bound: list[int],
         upper_bound: list[int],
         is_snake_head=False,
-    ) -> Optional[Tuple[int, int]]:
+    ) -> Optional[Tuple[int, int, int, int]]:
         """
         Detect an object  by color filtering in HSV space.
 
@@ -168,17 +168,17 @@ class ImageAnalyser:
                 if M["m00"] != 0:
                     cx_local = int(M["m10"] / M["m00"])
                     cy_local = int(M["m01"] / M["m00"])
-                    return (x + cx_local, y + cy_local)
+                    return (x + cx_local, y + cy_local, w, h)
 
         #  Use the center of the largest contour
         M = cv.moments(largest_contour)
         if M["m00"] != 0:
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
-            return (cx, cy)
+            return (cx, cy, w, h)
 
         # Final fallback: Use bounding box center
-        return (x + w // 2, y + h // 2)
+        return (x + w // 2, y + h // 2, w, h)
 
     def match_with_template(
         self, img: MatLike, comparison_frame: MatLike

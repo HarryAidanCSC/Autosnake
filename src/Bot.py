@@ -14,10 +14,9 @@ from cv2.typing import MatLike, Point
 from ImageAnalyser import ImageAnalyser
 from GameMap import GameMap
 from solve_grid import breadth_first_search
-from FrameRenderer import FrameRender
+from FrameMerchant import FrameMerchant
 from utils.verify_phone import check_device_connection, AndroidConnectionError
 from utils.kill_button import kill_button
-from SetupMerchant import SetupMerchant
 
 
 class Bot:
@@ -25,20 +24,16 @@ class Bot:
 
     def __init__(
         self,
-        snake_file_path: str,
-        apple_file_path: str,
-        cog_file_path: str,
+        map_config: str,
         max_size: int = 480,
         bitrate: int = 800000,
         max_fps: int = 20,
-        greyscale: bool = False,
         visual_debug: bool = True,
     ):
         """Construct a new Bot to play Snake.
 
         Args:
-            snake_file_path (str): File path of the snake head template.
-            apple_file_path (str): File path of the apple template.
+            map_config (str): Custom YAML name of map type.
             max_size (int, optional): Maximum number of pixels for the phone's x/y. Defaults to 480.
             bitrate (int, optional): Rate of data transfer. Defaults to 800000.
             max_fps (int, optional): Maximum number of frames per second. Defaults to 20.
@@ -64,49 +59,23 @@ class Bot:
 
         # Initalise image calibration
 
-        self.image_analyser = ImageAnalyser(greyscale=greyscale)
-        self.greyscale = greyscale
+        self.image_analyser = ImageAnalyser()
 
         # Run hotkey in background
         keyboard.add_hotkey("esc", kill_button)
 
-        # Load templates
-        self.snake_head_templates = self.image_analyser.get_image_and_rotations(
-            file_path=snake_file_path
-        )
-        self.apple_template = self.image_analyser.get_image_and_scaled(
-            file_path=apple_file_path, scales=[0.9, 1.0, 1.1]
-        )
-
-        # Load and start client
-        self.client = Client(
-            max_size=self.max_size, bitrate=self.bitrate, max_fps=self.max_fps
-        )
-        self.game_map = GameMap()
-
-        # Original phone dimensions - adjust as needed
-        self.PHONE_RESOLUTION = (1080, 2408)
-        self.setup_merchant = SetupMerchant(
-            client_config={
-                "max_size": self.max_size,
-                "bitrate": self.bitrate,
-                "max_fps": self.max_fps,
-            }
-        )
-
-        # Define trim values for cropping the frame
-        self.setup_merchant.calibrate_capture_region(
-            cog_file_path=cog_file_path, restart_callback=self._restart
-        )
-
         # Calculate width of each cell
-        self.frame_renderer = FrameRender(
-            capture_width=self.setup_merchant.cap_w,
-            capture_height=self.setup_merchant.cap_h,
-            n_cells_w=self.game_map.GRID_W,
-            n_cells_h=self.game_map.GRID_H,
+        self.frame_merchant = FrameMerchant(
+            config_name=map_config,
             debug_overlay=visual_debug,
         )
+
+        # Initialise game components
+        self.game_map = GameMap(
+            grid_nc_nr=self.frame_merchant.get_grid_dims(),
+            grid_hpx_wpx=self.frame_merchant.get_cell_dims(),
+        )
+        self.client = Client(max_size=max_size, bitrate=bitrate, max_fps=max_fps)
 
     def play_snake(self) -> None:
         """Entry point to play a snake repeatedly."""
@@ -137,9 +106,10 @@ class Bot:
                 return
 
             # Crop frame
+            lpx, rpx, tpx, bpx = self.frame_merchant.get_crop_px()
             frame = frame[
-                self.setup_merchant.tpx : self.setup_merchant.bpx,
-                self.setup_merchant.lpx : self.setup_merchant.rpx,
+                tpx:bpx,
+                lpx:rpx,
             ]
             # Convert frame to greyscale for matching (only for template matching)
             hsv_frame = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
@@ -149,31 +119,31 @@ class Bot:
                 frame=hsv_frame,
                 lower_bound=[83, 0, 190],
                 upper_bound=[128, 173, 255],
+                # lower_bound=[85, 116, 0],
+                # upper_bound=[113, 174, 255],
                 is_snake_head=True,
             )
 
             if head_loc is not None:
-                template_w = self.snake_head_templates[0][1]
-                template_h = self.snake_head_templates[0][2]
+                hw = head_loc[2]
+                hh = head_loc[3]
 
                 # Convert center to top-left corner
-                top_left_x = head_loc[0] - (template_w // 2)
-                top_left_y = head_loc[1] - (template_h // 2)
+                top_left_x = head_loc[0] - (hw // 2)
+                top_left_y = head_loc[1] - (hh // 2)
                 top_left = (top_left_x, top_left_y)
 
-                self.frame_renderer._write_box_on_frame(
+                self.frame_merchant._write_box_on_frame(
                     frame,
                     top_left=top_left,
-                    width=template_w,
-                    height=template_h,
+                    width=hw,
+                    height=hh,
                     colour_key="snakeHead",
                 )
 
                 # For grid mapping, pass the top-left corner
-                snake_pos = self.frame_renderer._pixel_to_coords(
-                    top_left_x,
-                    top_left_y,
-                    self.snake_head_templates[0],  # type:ignore
+                snake_pos = self.frame_merchant._pixel_to_coords(
+                    x=top_left_x, y=top_left_y, width=hw, height=hh
                 )
             else:
                 snake_pos = None
@@ -185,27 +155,25 @@ class Bot:
             )
 
             if apl_loc is not None:
-                template_w = self.apple_template[0][1]
-                template_h = self.apple_template[0][2]
+                aw = apl_loc[2]
+                ah = apl_loc[3]
 
                 # Convert center to top-left corner
-                top_left_x = apl_loc[0] - (template_w // 2)
-                top_left_y = apl_loc[1] - (template_h // 2)
+                top_left_x = apl_loc[0] - (aw // 2)
+                top_left_y = apl_loc[1] - (ah // 2)
                 top_left = (top_left_x, top_left_y)
 
-                self.frame_renderer._write_box_on_frame(
+                self.frame_merchant._write_box_on_frame(
                     frame,
                     top_left=top_left,
-                    width=template_w,
-                    height=template_h,
+                    width=aw,
+                    height=ah,
                     colour_key="apple",
                 )
 
                 # Use top-left for grid mapping (same as snake head)
-                apl_pos = self.frame_renderer._pixel_to_coords(
-                    top_left_x,
-                    top_left_y,
-                    self.apple_template[0],  # type:ignore
+                apl_pos = self.frame_merchant._pixel_to_coords(
+                    top_left_x, top_left_y, width=aw, height=ah
                 )
             else:
                 apl_pos = None
@@ -214,7 +182,7 @@ class Bot:
             grid, snake_body = self.game_map.build_grid(frame)
 
             # Render snake's body for debugger
-            self.frame_renderer.render_multi_coordinates(
+            self.frame_merchant.render_multi_coordinates(
                 frame=frame,
                 coordinates=snake_body,
                 colour_key="snake",
@@ -231,9 +199,9 @@ class Bot:
                 )
                 if path:
                     # Convert back to unpadded coordinates for rendering
-                    unpadded_path = [(y - 1, x - 1) for x, y in path]
+                    unpadded_path = [(x - 1, y - 1) for x, y in path]
 
-                    self.frame_renderer.render_multi_coordinates(
+                    self.frame_merchant.render_multi_coordinates(
                         frame=frame,
                         coordinates=unpadded_path,
                         colour_key="path",
@@ -296,9 +264,8 @@ class Bot:
                 )
 
             # Break condition
-
             if best_val >= self.CONFIDENCE_THRESHOLD and best_loc is not None:
-                self.frame_renderer._write_box_on_frame(
+                self.frame_merchant._write_box_on_frame(
                     frame,
                     top_left=best_loc,
                     width=best_w,
@@ -321,9 +288,10 @@ class Bot:
             client.control.keycode(code, const.ACTION_UP)
         print("Action Done")
 
-    def _restart(self, client) -> None:
-        x_coord = int(self.PHONE_RESOLUTION[0] * 0.463)
-        y_coord = int(self.PHONE_RESOLUTION[1] * 0.701)
+    def _restart(self, client: Client) -> None:
+        h, w = self.frame_merchant.get_original_device_px()
+        x_coord = int(w * 0.463)
+        y_coord = int(h * 0.701)
         client.control.touch(x_coord, y_coord)
 
 
@@ -333,16 +301,15 @@ if __name__ == "__main__":
         check_device_connection()
 
         bot = Bot(
-            snake_file_path="assets/snake_snooter.png",
-            apple_file_path="assets/apple.png",
-            cog_file_path="assets/gear.png",
+            map_config="large",
             max_size=480,
             bitrate=800000,
             max_fps=20,
             visual_debug=True,
         )
-        bot.setup_merchant.foo()
-        # bot.play_snake()
+
+        # Start playing
+        bot.play_snake()
     except AndroidConnectionError as e:
         print(f"Error: {e}")
     except Exception as e:
