@@ -1,64 +1,21 @@
 # Adjust this config using utils/test_crop_adjuster for your device
-original_resolution:
-  width: 1080
-  height: 2408
 
 small:
-  cell_cols: 6
-  cell_rows: 14
+  cell_cols: 10
+  cell_rows: 9
   frame_size:
-    width: 216
-    height: 480
+    width: 1920
+    height: 1080
   crop_size:
-    width: 172  
-    height: 398  
+    width: 780
+    height: 702
   absolute_values:
-    lpx: 21
-    rpx: 193
-    tpx: 71
-    bpx: 469
+    lpx: 560
+    rpx: 1340
+    tpx: 279
+    bpx: 981
   percs:
-    left: 9.7
-    right: 89.4
-    top: 14.8
-    bottom: 97.8
-
-medium:
-  cell_cols: 11
-  cell_rows: 23
-  frame_size:
-    width: 216
-    height: 480
-  crop_size:
-    width: 189  
-    height: 396 
-  absolute_values:
-    lpx: 12
-    rpx: 201
-    tpx: 72
-    bpx: 468
-  percs:
-    left: 5.6
-    right: 93.1
-    top: 15.0
-    bottom: 97.5
-
-large:
-  cell_cols: 15
-  cell_rows: 32
-  frame_size:
-    width: 216
-    height: 480
-  crop_size:
-    width: 184  
-    height: 389  
-  absolute_values:
-    lpx: 15
-    rpx: 199
-    tpx: 75
-    bpx: 464
-  percs:
-    left: 6.9
-    right: 92.1
-    top: 15.6
-    bottom: 96.7
+    left: 29.2
+    right: 69.8
+    top: 25.8
+    bottom: 90.8

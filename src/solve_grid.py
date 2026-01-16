@@ -24,7 +24,7 @@ def breadth_first_search(
     Returns:
         List of (x, y) tuples from start to goal (excluding start),
         or [] if no path, or None if invalid input
-        
+
     Note:
         Internally uses (y, x) for numpy array indexing, but returns (x, y) format.
     """
@@ -47,7 +47,7 @@ def breadth_first_search(
         start_arrived_from = (dy, dx)  # BFS uses (dy, dx) format
     else:
         start_arrived_from = None
-        
+
     queue = deque([(start_y, start_x, start_arrived_from)])
     dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
     parents: list[list[Optional[Tuple[int, int]]]] = [
@@ -58,7 +58,7 @@ def breadth_first_search(
     # Explore neighbours
     while queue:
         y, x, arrived_from = queue.popleft()
-        
+
         # Filter out the opposite direction of how we arrived
         if arrived_from is not None:
             # If we arrived from direction (dy, dx), we can't go back (-dy, -dx)

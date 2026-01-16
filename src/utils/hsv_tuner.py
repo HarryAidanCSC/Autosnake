@@ -23,6 +23,13 @@ def tune_hsv_colour(image_path: str) -> None:
         return
 
     # Create window and trackbars
+    height, width = frame.shape[:2]
+    if height > 500 or width > 500:
+        scale = 500 / max(height, width)
+        new_width = int(width * scale)
+        new_height = int(height * scale)
+        frame = cv.resize(frame, (new_width, new_height))
+
     cv.namedWindow("HSV Tuner")
     cv.namedWindow("Original")
     cv.namedWindow("Mask")
