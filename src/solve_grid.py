@@ -1,25 +1,14 @@
 from collections import deque
 import numpy as np
 from typing import Optional, Tuple
+from SnakeState import SnakeState
 
 
-def breadth_first_search(
-    grid: np.ndarray,
-    start_x: int,
-    start_y: int,
-    goal_x: int,
-    goal_y: int,
-    current_direction: Optional[Tuple[int, int]] = None,
-) -> Optional[list[Tuple[int, int]]]:
+def breadth_first_search(state: SnakeState) -> Optional[list[Tuple[int, int]]]:
     """Find shortest path from start to goal using BFS.
 
     Args:
-        grid: 2D array where 0=walkable, 1=obstacle
-        start_x: Starting column (X coordinate)
-        start_y: Starting row (Y coordinate)
-        goal_x: Goal column (X coordinate)
-        goal_y: Goal row (Y coordinate)
-        current_direction: Current movement direction as (dx, dy) to prevent 180° turn
+        TBC
 
     Returns:
         List of (x, y) tuples from start to goal (excluding start),
@@ -29,29 +18,25 @@ def breadth_first_search(
         Internally uses (y, x) for numpy array indexing, but returns (x, y) format.
     """
     # Validate inputs
-    if any(coord is None or coord < 0 for coord in [start_x, start_y, goal_x, goal_y]):
-        return None
+    start_x, start_y = state.snake_snoot_coords
+    goal_x, goal_y = state.apple_pos
 
     # Get grid dimensions for bounds checking
-    height, width = grid.shape
+    nrows, ncols = state.NROWS, state.NCOLS
 
     # Validate coordinates are within bounds
-    if not (0 <= start_x < width and 0 <= start_y < height):
+    if not (0 <= start_x < ncols and 0 <= start_y < nrows):
         return None
-    if not (0 <= goal_x < width and 0 <= goal_y < height):
+    if not (0 <= goal_x < ncols and 0 <= goal_y < nrows):
         return None
 
     # Initialise BFS
-    if current_direction is not None:
-        dx, dy = current_direction
-        start_arrived_from = (dy, dx)  # BFS uses (dy, dx) format
-    else:
-        start_arrived_from = None
-
+    dx, dy = state.get_int_dir()
+    start_arrived_from = (dy, dx)
     queue = deque([(start_y, start_x, start_arrived_from)])
     dirs = [(1, 0), (-1, 0), (0, 1), (0, -1)]
     parents: list[list[Optional[Tuple[int, int]]]] = [
-        [None for _ in range(width)] for _ in range(height)
+        [None for _ in range(ncols)] for _ in range(nrows)
     ]
     parents[start_y][start_x] = (-1, -1)
 
@@ -71,10 +56,10 @@ def breadth_first_search(
         for dy, dx in explore_dirs:
             ny, nx = y + dy, x + dx
 
-            if not (0 <= ny < height and 0 <= nx < width):
+            if not (0 <= ny < nrows and 0 <= nx < ncols):
                 continue
 
-            if parents[ny][nx] is None and grid[ny, nx] != 1:
+            if parents[ny][nx] is None and state.grid[ny, nx] != 1:
                 parents[ny][nx] = (y, x)
                 # Store the direction we used to arrive at (ny, nx)
                 queue.append((ny, nx, (dy, dx)))

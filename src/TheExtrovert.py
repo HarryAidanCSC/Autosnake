@@ -8,7 +8,7 @@ from cv2.typing import MatLike
 from typing import Any
 import numpy as np
 import pyautogui
-from typing import Tuple
+from typing import Tuple, Optional
 import keyboard
 import yaml
 
@@ -41,6 +41,9 @@ class TheExtrovert:
         self.mon["width"] = self.display_config["crop_size"]["width"]
         self.mon["height"] = self.display_config["crop_size"]["height"]
 
+        # Cache frequently used coords
+        self.coords_cache = {"restart": (420, 480)}
+
     def _parse_yaml(self, config_name: str) -> dict[str, Any]:
         """Parse the YAML config to calibrate display.
 
@@ -71,11 +74,12 @@ class TheExtrovert:
             MatLike: Display frame.
         """
         frame = np.array(self.sct.grab(self.mon))
+        frame = cv.cvtColor(frame, cv.COLOR_BGRA2BGR)
         return frame
 
     def display_live_feed(self, frames: dict[str, MatLike]) -> bool:
         """
-        Display multiple video feeds at once.
+        Display multiple video feeds at once. Allow a screenshot for the first feed.
 
         Args:
             frames: Dictionary where Key=WindowName and Value=Image.
@@ -91,10 +95,10 @@ class TheExtrovert:
             display_img = self._resize_frame(frame)
             cv.imshow(window_name, display_img)
 
-        if cv.waitKey(1) & 0xFF == ord("q"):
+        key = cv.waitKey(1) & 0xFF
+        if key == ord("q"):
             cv.destroyAllWindows()
             return False
-
         return True
 
     def display_frame(self, frames: dict[str, MatLike]) -> None:
@@ -132,7 +136,13 @@ class TheExtrovert:
 
         return frame
 
-    def click_screen(self, x: int, y: int, apply_offset: bool = True) -> None:
+    def click_screen(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        apply_offset: bool = True,
+        coords_cache_key: str = "NOKEY",
+    ) -> None:
         """Click screen coords optionally with a screen offset adjustment.
 
         Args:
@@ -140,6 +150,15 @@ class TheExtrovert:
             y (int): Y coordinate.
             apply_offset (bool, optional): Whether to apply offset. Defaults to True.
         """
+        xy = self.coords_cache.get(coords_cache_key)
+        if xy:
+            x, y = xy
+
+        if x is None or y is None:
+            raise ValueError(
+                f"X coordinate of {x} and Y coordinate of {y} are not valid."
+            )
+
         if apply_offset:
             x, y = self._coord_offset(x=x, y=y)
 
@@ -166,3 +185,9 @@ class TheExtrovert:
             keys (str): Keys to press
         """
         keyboard.press_and_release(keys)
+
+    def get_display_config(self) -> dict[str, Any]:
+        return self.display_config
+
+    def save_screenshot(self, frame: MatLike) -> None:
+        cv.imwrite("debug_screenshot.png", frame)

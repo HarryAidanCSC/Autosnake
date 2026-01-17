@@ -92,7 +92,9 @@ class ImageAnalyser:
         self, frame: MatLike, lower_bound: list[int], upper_bound: list[int]
     ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
         contours = self._get_contours(
-            frame=frame, lower_bound=lower_bound, upper_bound=upper_bound
+            frame=frame,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
         )
 
         # Return None if no contours found
@@ -126,7 +128,9 @@ class ImageAnalyser:
 
         # First locate contours
         contours = self._get_contours(
-            frame=frame, lower_bound=lower_bound, upper_bound=upper_bound
+            frame=frame,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
         )
 
         # Return None if no contours found

@@ -1,12 +1,19 @@
 import numpy as np
 from typing import Tuple
 from cv2.typing import MatLike
+from SnakeState import SnakeState
 
 
 class GameMap:
-    def __init__(self, grid_nc_nr: Tuple[int, int], grid_hpx_wpx: Tuple[float, float]):
+    def __init__(
+        self,
+        grid_nc_nr: Tuple[int, int],
+        grid_hpx_wpx: Tuple[float, float],
+        state: SnakeState,
+    ):
         self.NCOLS, self.NROWS = grid_nc_nr
         self.CELL_HPX, self.CELL_WPX = grid_hpx_wpx
+        self.state = state
 
         self.centre_coords = []
         for r in range(self.NROWS):
@@ -23,17 +30,16 @@ class GameMap:
     def build_grid(
         self,
         frame: MatLike,
-    ) -> Tuple[np.ndarray, list[Tuple[int, int]]]:
+    ) -> None:
         # Get frame dimensions
         img_h, img_w = frame.shape[:2]
-        # Create logic grid
-        logic_grid = np.zeros((self.NROWS, self.NCOLS), dtype=int)
 
         # Find snake body
         snake_body = []
 
         for r in range(self.NROWS):
             for c in range(self.NCOLS):
+                value = 0
 
                 centre_x, centre_y = self.centre_coords[r][c]
 
@@ -43,15 +49,22 @@ class GameMap:
 
                 # Get Color at this spot (BGR)
                 pixel = frame[centre_y, centre_x]
-                blue, green, red = pixel
+                try:
+                    blue, _, _ = pixel
+                except Exception as e:
+                    print("YOU TWAT", pixel)
+                    import sys
+
+                    sys.exit(1)
 
                 # Detect Snake Body
                 is_snake_body = blue > 130
 
                 if is_snake_body:
-                    logic_grid[r, c] = 1  # Mark as Obstacle
+                    value = 1
 
                     snake_body.append((centre_x, centre_y))
-        # Pad the grid
-        logic_grid = np.pad(logic_grid, pad_width=1, mode="constant", constant_values=1)
-        return logic_grid, snake_body
+                self.state.update_grid_coords(row=r, col=c, value=value)
+
+        # Update state
+        self.state.snake_body = snake_body

@@ -1,48 +1,38 @@
 import numpy as np
 from cv2.typing import Point, MatLike
-from typing import Tuple, DefaultDict, Optional
+from typing import Tuple, DefaultDict, Any
 import cv2 as cv
 from collections import defaultdict
-import yaml
 
 
 class FrameMerchant:
     def __init__(
         self,
-        config_name: str = "small",
+        cfg: dict[str, Any],
         debug_overlay=True,
     ) -> None:
 
         self.FONT = cv.FONT_HERSHEY_SIMPLEX
+        self.cfg = cfg
+        # Absolute crop values in px
+        abs_vals = self.cfg.get("absolute_values", {})
+        self.lpx = abs_vals.get("lpx", 0)
+        self.rpx = abs_vals.get("rpx", 0)
+        self.tpx = abs_vals.get("tpx", 0)
+        self.bpx = abs_vals.get("bpx", 0)
 
-        # Parse input file to define dimensions and sizes
-        self.setup_config = self._parse_yaml(file_path="crop_config.yaml")
-        if self.setup_config and config_name in self.setup_config.keys():
-            # Original phone resolution
-            self.org_phone_width = self.setup_config["original_resolution"]["width"]
-            self.org_phone_height = self.setup_config["original_resolution"]["height"]
+        # Size of cropped frame in px
+        crop_size = self.cfg.get("crop_size", {})
+        self.cap_w = crop_size.get("width", 0)
+        self.cap_h = crop_size.get("height", 0)
 
-            self.cfg = self.setup_config[config_name]
+        # Number of columns and cells
+        self.cell_cols = self.cfg.get("cell_cols", 0)
+        self.cell_rows = self.cfg.get("cell_rows", 0)
 
-            # Absolute crop values in px
-            abs_vals = self.cfg.get("absolute_values", {})
-            self.lpx = abs_vals.get("lpx", 0)
-            self.rpx = abs_vals.get("rpx", 0)
-            self.tpx = abs_vals.get("tpx", 0)
-            self.bpx = abs_vals.get("bpx", 0)
-
-            # Size of cropped frame in px
-            crop_size = self.cfg.get("crop_size", {})
-            self.cap_w = crop_size.get("width", 0)
-            self.cap_h = crop_size.get("height", 0)
-
-            # Number of columns and cells
-            self.cell_cols = self.cfg.get("cell_cols", 0)
-            self.cell_rows = self.cfg.get("cell_rows", 0)
-
-            # Calculate cell dimensions
-            self.cell_height_px = self.cap_h // self.cell_rows
-            self.cell_width_px = self.cap_w // self.cell_cols
+        # Calculate cell dimensions
+        self.cell_height_px = self.cap_h // self.cell_rows
+        self.cell_width_px = self.cap_w // self.cell_cols
 
         # Option to not use debug overlays
         self.debug_overlay = debug_overlay
@@ -57,25 +47,6 @@ class FrameMerchant:
         self.colours["snakehead"] = (255, 0, 0)  # Blue
         self.colours["snoot"] = (0, 215, 255)  # Gold (BGR format)
 
-    def _parse_yaml(self, file_path: str) -> Optional[dict]:
-        """Parse config yaml to setup dimensions.
-        Args:
-            file_path (str): Relative path of yaml file.
-
-        Returns:
-            Optional[dict]: Config dictionary.
-        """
-        try:
-            with open(file_path, "r") as file:
-                config = yaml.safe_load(file)
-                return config
-        except FileNotFoundError:
-            print(f"Error: Config file '{file_path}' not found.")
-            return None
-        except yaml.YAMLError as exc:
-            print(f"Error parsing YAML: {exc}")
-            return None
-
     def _write_box_on_frame(
         self,
         frame: MatLike,
@@ -83,7 +54,6 @@ class FrameMerchant:
         width: int,
         height: int,
         colour_key: str,
-        text: str = "",
     ) -> None:
         """Render a box + text layer on top of the frame for the userr
 
@@ -92,8 +62,7 @@ class FrameMerchant:
             top_left (Point): Coordinates of the top left of the box.
             width (int): Width of the box (px).
             height (int): Height of the box (px).
-            colour_key (str): Name cooresponding to RGB value of box + text.
-            text (str): Any text to write. Defaults to empty string.
+            colour_key (str): Name corresponding to RGB value of box.
         """
         if not self.debug_overlay:
             return
@@ -103,34 +72,19 @@ class FrameMerchant:
         # Draw a rectangle on the frame
         colour = self.colours[colour_key.lower()]
         cv.rectangle(
-            img=frame, pt1=top_left, pt2=bottom_right, color=colour, thickness=2
-        )
-
-        # Put text showing the confidence score
-        cv.putText(
-            frame,
-            text,
-            (top_left[0], top_left[1] - 10),
-            self.FONT,
-            0.5,
-            colour,
-            1,
+            img=frame, pt1=top_left, pt2=bottom_right, color=colour, thickness=5
         )
 
     def _pixel_to_coords(
         self,
         x: int,
         y: int,
-        width: int,
-        height: int,
     ) -> Tuple[int, int]:
         """Convert screen pixel to grid coordinates.
 
         Args:
             x (int): X pixel value.
             y (int): Y pixel value.
-            width (int): Width of object
-            height (int): Height of object.
 
         Returns:
             Tuple[int, int]: x, y coordinates.
@@ -139,8 +93,8 @@ class FrameMerchant:
         cell_h = int(round(self.cell_height_px))
 
         # Adjust x, y to be the centre of the object
-        centre_x = x + (width // 2)
-        centre_y = y + (height // 2)
+        centre_x = x
+        centre_y = y
 
         # Convert to Grid Index
         grid_x = centre_x // cell_w
@@ -196,7 +150,7 @@ class FrameMerchant:
             if is_grid_coords:
                 x, y = self._coords_to_pixels(grid_x=x, grid_y=y)
 
-            cv.circle(frame, (x, y), 3, colour, -1) 
+            cv.circle(frame, (x, y), 3, colour, 3)
 
     def get_grid_dims(self) -> Tuple[int, int]:
         """Return number of columns and rows."""
@@ -213,7 +167,3 @@ class FrameMerchant:
     def get_crop_px(self) -> Tuple[int, int, int, int]:
         """Get left, right, top and bottom cropping coordinates."""
         return self.lpx, self.rpx, self.tpx, self.bpx
-
-    def get_original_device_px(self) -> Tuple[int, int]:
-        """Return height and width of original device screen."""
-        return self.org_phone_height, self.org_phone_width
